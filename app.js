@@ -82,14 +82,22 @@ function dataFromCounts(c){return {counts:c,total:total(c)}}
 function sumSummaries(arr){const c=[0,0,0,0];arr.forEach(s=>counts(s).forEach((n,i)=>c[i]+=n));return dataFromCounts(c)}
 async function getSummary(s,force=false){
  const key=sessionKey(s),cached=summaryCache.get(key);
- if(!force&&cached&&Date.now()-cached.at<10000)return cached.value;
+ if(!cached){try{const disk=JSON.parse(safeRead('tu_v2_summary_'+key)||'null');if(disk?.value)summaryCache.set(key,disk)}catch{}}
+ const current=summaryCache.get(key);
+ if(!force&&current&&Date.now()-current.at<30000)return current.value;
  if(!force&&summaryRequests.has(key))return summaryRequests.get(key);
  const payload=s.event_id?{event_id:s.event_id}:{rating_date:s.rating_date,meal:s.meal,category:s.category};
  const request=api('rating-summary',payload).then(r=>{
   const value=r.summary||{total_ratings:0,very_bad:0,bad:0,good:0,very_good:0};
-  summaryCache.set(key,{at:Date.now(),value});return value;
+  const entry={at:Date.now(),value};summaryCache.set(key,entry);safeWrite('tu_v2_summary_'+key,JSON.stringify(entry));return value;
  }).finally(()=>{if(summaryRequests.get(key)===request)summaryRequests.delete(key)});
  summaryRequests.set(key,request);return request;
+}
+function paintMeter(panel,summary){
+ if(!panel?.isConnected)return;
+ panel.classList.add('meter-updating');
+ panel.innerHTML='<div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:counts(summary)},'Taste');
+ requestAnimationFrame(()=>panel.classList.remove('meter-updating'));
 }
 
 function setTheme(){document.body.className=state.page==='rate'?'cosmic':state.page==='overall'?'aurora':''}
@@ -135,15 +143,15 @@ async function renderRate(){
  let savedRecord=saved;
  const existing=Number(savedRecord?.taste_rating)||0,reviewText=savedRecord?.review||'';
   const savedNotice=savedRecord?'<section class="panel edit-saved" id="savedNotice"><div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button></section>':'';
-  app.innerHTML=head+meterPanel+savedNotice+'<section class="panel" id="votePanel" '+(savedRecord?'hidden':'')+'><h2>'+(savedRecord?'Edit your rating':'Submit your rating')+'</h2><p>Choose one of the four options.</p><form id="vote"><div class="rating"><b>Taste</b><div class="rating-buttons">'+LEVELS.map((x,i)=>'<button type="button" class="rate '+(existing===i+1?'selected':'')+'" data-v="'+(i+1)+'">'+x+'</button>').join('')+'</div></div><div class="review-box"><h3>Write a Review</h3><textarea id="reviewText" maxlength="500" rows="4" placeholder="Write your review here...">'+esc(reviewText)+'</textarea><div class="review-meta"><span class="notice">Optional · Anonymous</span><span class="notice" id="reviewCount">'+reviewText.length+'/500</span></div></div><div class="row" style="margin-top:15px"><span class="notice">Edit access is private and saved on this device.</span><button type="submit" class="primary" id="send" '+(!existing?'disabled':'')+'>'+(savedRecord?'Update my rating':'Post rating')+'</button></div><div id="message" class="notice" role="status" style="margin-top:10px"></div></form></section>';
+  app.innerHTML=head+meterPanel+savedNotice+'<section class="panel" id="votePanel" '+(savedRecord?'hidden':'')+'><h2>'+(savedRecord?'Edit your rating':'Submit your rating')+'</h2><p>Choose one of the four options.</p><form id="vote"><div class="rating"><b>Taste</b><div class="rating-buttons">'+LEVELS.map((x,i)=>'<button type="button" class="rate '+(existing===i+1?'selected':'')+'" data-v="'+(i+1)+'">'+x+'</button>').join('')+'</div></div><div class="review-box"><h3>Write a Review</h3><textarea id="reviewText" maxlength="500" rows="4" placeholder="Write your review here...">'+esc(reviewText)+'</textarea><div class="review-meta"><span class="notice">Optional · Anonymous</span><span class="notice" id="reviewCount">'+reviewText.length+'/500</span></div></div><div class="row" style="margin-top:15px"><span class="notice">Edit access is private and saved on this device.</span><button type="button" class="primary" id="send" '+(!existing?'disabled':'')+'>'+(savedRecord?'Update my rating':'Post rating')+'</button></div><div id="message" class="notice" role="status" style="margin-top:10px"></div></form></section>';
   const bindEditToggle=()=>{const toggle=document.getElementById('editToggle');if(toggle)toggle.onclick=()=>{document.getElementById('votePanel').hidden=false;toggle.hidden=true;};};
   bindEditToggle();
  bindBack(state.meal==='dinner'?'category':'home');
  let chosen=existing;const review=document.getElementById('reviewText');
  review.oninput=()=>document.getElementById('reviewCount').textContent=review.value.length+'/500';
  app.querySelectorAll('.rate').forEach(b=>b.onclick=()=>{chosen=Number(b.dataset.v);app.querySelectorAll('.rate').forEach(x=>x.classList.toggle('selected',x===b));document.getElementById('send').disabled=false});
- document.getElementById('vote').addEventListener('submit',async e=>{
-  e.preventDefault();e.stopPropagation();if(!chosen)return;
+ document.getElementById('vote').onsubmit=e=>e.preventDefault();
+  document.getElementById('send').addEventListener('click',async()=>{if(!chosen)return;
   const btn=document.getElementById('send'),msg=document.getElementById('message');btn.disabled=true;btn.textContent=savedRecord?'Updating…':'Posting…';
   try{
    const reviewValue=review.value.trim(),previous=Number(savedRecord?.taste_rating)||0;
@@ -159,21 +167,18 @@ async function renderRate(){
    if(previous>0)liveCounts[previous-1]=Math.max(0,liveCounts[previous-1]-1);
    liveCounts[chosen-1]++;
    summaryCache.set(sessionKey(s),{at:Date.now(),value:{total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]}});
-   const livePanel=app.querySelector('#liveMeter');
-   if(livePanel)livePanel.innerHTML='<div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:liveCounts},'Taste');
-   const votePanel=document.getElementById('votePanel');if(votePanel)votePanel.hidden=true;
-   let savedPanel=app.querySelector('.edit-saved');
-   if(!savedPanel){savedPanel=document.createElement('section');savedPanel.className='panel edit-saved';votePanel.parentNode.insertBefore(savedPanel,votePanel);}
-   savedPanel.innerHTML='<div class="row"><div><h2>Your rating is saved</h2><p>Your meter has been updated. You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button>';
-   bindEditToggle();btn.textContent='Update my rating';btn.disabled=false;
+   const nextSummary={total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]};
+   summaryCache.set(sessionKey(s),{at:Date.now(),value:nextSummary});safeWrite('tu_v2_summary_'+sessionKey(s),JSON.stringify({at:Date.now(),value:nextSummary}));
+   paintMeter(app.querySelector('#liveMeter'),nextSummary);
+   msg.textContent='Saved — your rating meter has been updated.';
+   btn.textContent='Update my rating';btn.disabled=false;
   }catch(err){msg.textContent=err.message||'Unable to submit rating.';btn.disabled=false;btn.textContent=savedRecord?'Update rating':'Post'}
  });
  // Show the form immediately; refresh only the meter after the live summary arrives.
  getSummary(s,true).then(summary=>{
   if(id!==pageVersion)return;
   liveCounts=counts(summary);
-  const panel=app.querySelector('#liveMeter');
-  if(panel)panel.innerHTML='<div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:liveCounts},'Taste');
+  paintMeter(app.querySelector('#liveMeter'),summary);
  }).catch(()=>{
   const panel=app.querySelector('#liveMeter');
   if(panel&&!panel.querySelector('.meter'))panel.innerHTML='<div class="notice">Live ratings could not be loaded. Your rating form is still available.</div>';
@@ -267,8 +272,8 @@ function render(){
  else if(state.page==='admin')renderAdmin();
 }
 async function refreshRateMeter(){
- const s=sessionFor(state.day,state.meal,state.category);try{const r=await getSummary(s);const panel=app.querySelector('#liveMeter');if(panel)panel.outerHTML='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:counts(r)},'Taste')+'</section>'}catch{}
-}
+  const s=sessionFor(state.day,state.meal,state.category);try{const r=await getSummary(s,true);paintMeter(app.querySelector('#liveMeter'),r)}catch{}
+ }
 if(location.hash===ADMIN_HASH)state.page='admin';
 historyDepth=0;try{history.replaceState(snap(),'',state.page==='admin'?ADMIN_HASH:'#'+state.page)}catch{}
 restorePublicCache();
