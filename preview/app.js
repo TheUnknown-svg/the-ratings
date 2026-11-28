@@ -78,7 +78,7 @@ function saveEditRecord(s,r){safeWrite('tu_v2_edit_'+sessionKey(s),JSON.stringif
 function counts(summary){return [summary?.very_bad,summary?.bad,summary?.good,summary?.very_good].map(n=>Math.max(0,Math.floor(Number(n)||0)))}
 function total(c){return c.reduce((a,b)=>a+b,0)}
 function dataFromCounts(c){return {counts:c,total:total(c)}}
-function sumSummaries(arr){const c=[0,0,0,0];arr.forEach(s=>counts(s).forEach((n,i)=>c[i]+=n));return dataFromCounts(c)}
+function sumSummaries(arr){const c=[0,0,0,0];arr.forEach(s=>counts(s).forEach((n,i)=>c[i]+=n));return {total_ratings:total(c),very_bad:c[0],bad:c[1],good:c[2],very_good:c[3]}}
 async function getSummary(s,force=false){
  const key=sessionKey(s),cached=summaryCache.get(key);
  if(!cached){try{const disk=JSON.parse(safeRead('tu_v2_summary_'+key)||'null');if(disk?.value)summaryCache.set(key,disk)}catch{}}
