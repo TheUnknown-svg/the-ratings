@@ -6,7 +6,7 @@ const API_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/functions/v1/unknown-rat
 const AUTH_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/auth/v1';
 const API_KEY='sb_publishable_T_WBo0M8GVAE3Eo-bY6QQA_E1YX20vm';
 const app=document.getElementById('app');
-let schedules=[],events=[],messages=[],pageVersion=0,poll=null,messagePoll=null,adminSession=null,connectionIssue='',overallRefresh=null,publicDataLoaded=false,publicDataPromise=null,messagePromise=null,messageFetchedAt=0,messagePanelOpen=false,editingEventId=null,editingMessageId=null;
+let schedules=[],events=[],messages=[],messageReadIds=[],pageVersion=0,poll=null,messagePoll=null,adminSession=null,connectionIssue='',overallRefresh=null,publicDataLoaded=false,publicDataPromise=null,messagePromise=null,messageFetchedAt=0,messagePanelOpen=false,editingEventId=null,editingMessageId=null;
 const summaryCache=new Map(),summaryRequests=new Map();
 const PUBLIC_CACHE_KEY='tu_v2_public_cache';
 function restorePublicCache(){try{const x=JSON.parse(safeRead(PUBLIC_CACHE_KEY)||'null');if(x&&Date.now()-x.savedAt<86400000){schedules=x.schedules||[];events=x.events||[]}}catch{}}
@@ -28,8 +28,8 @@ function dateFor(day,offset=state.weekOffset||0){
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function safeRead(k){try{return localStorage.getItem(k)}catch{return null}}
 function safeWrite(k,v){try{localStorage.setItem(k,v);return true}catch{return false}}
-function readMessageIds(){try{return JSON.parse(safeRead('tu_v2_read_messages')||'[]').filter(x=>typeof x==='string')}catch{return []}}
-function markMessagesRead(ids){const set=new Set(readMessageIds());ids.forEach(x=>set.add(x));safeWrite('tu_v2_read_messages',JSON.stringify([...set].slice(-300)));updateMessageUI()}
+function readMessageIds(){return messageReadIds}
+function markMessagesRead(ids){const valid=ids.filter(x=>typeof x==='string');messageReadIds=[...new Set([...messageReadIds,...valid])].slice(-300);safeWrite('tu_v2_read_messages',JSON.stringify(messageReadIds));updateMessageUI();if(valid.length)api('mark-messages-read',{visitor_token:visitorToken(),message_ids:valid}).then(r=>{if(Array.isArray(r.read_ids)){messageReadIds=r.read_ids;safeWrite('tu_v2_read_messages',JSON.stringify(messageReadIds));updateMessageUI()}}).catch(()=>{})}
 function messageIsUnread(m){return !readMessageIds().includes(m.id)}
 function messageTime(v){if(!v)return '';const d=new Date(v);return Number.isNaN(d.getTime())?'':d.toLocaleString()}
 function renderMessageCenter(){const panel=document.getElementById('messageCenter');if(!panel)return;panel.hidden=!messagePanelOpen;if(!messagePanelOpen)return;const unread=messages.filter(messageIsUnread);panel.innerHTML='<div class="message-center-head"><div><strong>Notifications</strong><p>'+unread.length+' unread</p></div><div class="message-center-actions"><button class="secondary" id="markAllMessagesRead" '+(!unread.length?'disabled':'')+'>Mark all read</button><button class="secondary" id="closeMessageCenter" aria-label="Close notifications">×</button></div></div>'+(messages.length?'<div class="message-list">'+messages.map(m=>'<article class="message-item '+(messageIsUnread(m)?'unread':'')+'"><div class="message-item-top"><span class="message-type">'+esc(m.is_urgent?'Urgent':m.message_type==='announcement'?'Announcement':'Message')+'</span><time>'+esc(messageTime(m.publish_at))+'</time></div><h3>'+esc(m.title)+'</h3><p>'+esc(m.body)+'</p>'+(messageIsUnread(m)?'<button class="text-action" data-read-message="'+esc(m.id)+'">Mark as read</button>':'<span class="read-label">Read</span>')+'</article>').join('')+'</div>':'<div class="empty">No announcements or messages yet.</div>');const close=document.getElementById('closeMessageCenter');if(close)close.onclick=()=>{messagePanelOpen=false;renderMessageCenter()};const all=document.getElementById('markAllMessagesRead');if(all)all.onclick=()=>markMessagesRead(messages.map(m=>m.id));panel.querySelectorAll('[data-read-message]').forEach(b=>b.onclick=()=>markMessagesRead([b.dataset.readMessage]))}
@@ -58,13 +58,14 @@ async function api(action,data={},token=null){
 async function loadMessages(force=false){
  if(!force&&Date.now()-messageFetchedAt<18000)return;
  if(messagePromise)return messagePromise;
- messagePromise=api('public-messages').then(r=>{
+ messagePromise=api('visitor-messages',{visitor_token:visitorToken()}).then(r=>{
   messages=Array.isArray(r.messages)?r.messages:[];
+  messageReadIds=Array.isArray(r.read_ids)?r.read_ids:[];
   messageFetchedAt=Date.now();
-  safeWrite('tu_v2_public_messages',JSON.stringify({savedAt:messageFetchedAt,messages}));
+  safeWrite('tu_v2_public_messages',JSON.stringify({savedAt:messageFetchedAt,messages,read_ids:messageReadIds}));
   updateMessageUI();
  }).catch(()=>{
-  if(!messages.length){try{const c=JSON.parse(safeRead('tu_v2_public_messages')||'null');if(c&&Date.now()-c.savedAt<86400000)messages=Array.isArray(c.messages)?c.messages:[]}catch{}}
+  if(!messages.length){try{const c=JSON.parse(safeRead('tu_v2_public_messages')||'null');if(c&&Date.now()-c.savedAt<86400000){messages=Array.isArray(c.messages)?c.messages:[];messageReadIds=Array.isArray(c.read_ids)?c.read_ids:[]}}catch{}}
   updateMessageUI();
  }).finally(()=>{messagePromise=null});
  return messagePromise;
@@ -460,7 +461,7 @@ async function refreshRateMeter(){
 if(location.hash===ADMIN_HASH)state.page='admin';
 historyDepth=0;try{history.replaceState(snap(),'',state.page==='admin'?ADMIN_HASH:'#'+state.page)}catch{}
 restorePublicCache();
-try{const cached=JSON.parse(safeRead('tu_v2_public_messages')||'null');if(cached&&Date.now()-cached.savedAt<86400000)messages=Array.isArray(cached.messages)?cached.messages:[]}catch{}
+try{const cached=JSON.parse(safeRead('tu_v2_public_messages')||'null');if(cached&&Date.now()-cached.savedAt<86400000){messages=Array.isArray(cached.messages)?cached.messages:[];messageReadIds=Array.isArray(cached.read_ids)?cached.read_ids:[]}}catch{}
 const messageBell=document.getElementById('messageBell');if(messageBell)messageBell.onclick=()=>{messagePanelOpen=!messagePanelOpen;renderMessageCenter()};
 render();
 loadPublic().then(()=>{if(state.page==='home'||state.page==='category')render()}).catch(()=>{});
