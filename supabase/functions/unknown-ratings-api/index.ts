@@ -437,7 +437,7 @@ if (body.action === "edit-rating") {
    const seen = new Set<string>();
    const rows = [];
    for (const item of body.schedule) {
-     const timeOk = (v: unknown) => typeof v === "string" && /^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$/.test(v);
+     const timeOk = (v: unknown) => typeof v === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(v);
      if (!item || !Number.isInteger(item.weekday) || item.weekday < 0 || item.weekday > 6 ||
        !["breakfast","lunch","dinner"].includes(item.meal) ||
        typeof item.veg_enabled !== "boolean" || typeof item.nonveg_enabled !== "boolean" ||
@@ -461,7 +461,7 @@ if (body.action === "edit-rating") {
  if (body.action === "admin-save-event") {
    const auth = await requireAdmin(req);
    if (!auth.user) return respond({success:false,error:auth.error},auth.status,headers);
-   const timeOk = (v: unknown) => typeof v === "string" && /^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$/.test(v);
+   const timeOk = (v: unknown) => typeof v === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(v);
    const d=body.event_date,m=body.meal,c=body.category,n=typeof body.event_name==="string"?body.event_name.trim():"";
    if (!validDate(d) || !["breakfast","lunch","dinner"].includes(String(m)) ||
        !["all","veg","nonveg"].includes(String(c)) ||
