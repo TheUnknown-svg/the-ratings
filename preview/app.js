@@ -6,7 +6,7 @@ const API_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/functions/v1/unknown-rat
 const AUTH_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/auth/v1';
 const API_KEY='sb_publishable_T_WBo0M8GVAE3Eo-bY6QQA_E1YX20vm';
 const app=document.getElementById('app');
-let schedules=[],events=[],pageVersion=0,poll=null,adminSession=null,connectionIssue='',overallRefresh=null;
+let schedules=[],events=[],pageVersion=0,poll=null,adminSession=null,connectionIssue='',overallRefresh=null,publicDataLoaded=false,publicDataPromise=null;
 const summaryCache=new Map(),summaryRequests=new Map();
 const PUBLIC_CACHE_KEY='tu_v2_public_cache';
 function restorePublicCache(){try{const x=JSON.parse(safeRead(PUBLIC_CACHE_KEY)||'null');if(x&&Date.now()-x.savedAt<86400000){schedules=x.schedules||[];events=x.events||[]}}catch{}}
@@ -49,15 +49,23 @@ async function api(action,data={},token=null){
  }finally{clearTimeout(timer)}
 }
 async function loadPublic(){
+ if(publicDataLoaded)return;
+ if(publicDataPromise)return publicDataPromise;
  connectionIssue='';
- try{
-  const result=await api('public-data');
-  schedules=result.schedule||[];
-  events=result.events||[];
-  savePublicCache();
- }catch{
-  connectionIssue='Live data is temporarily unavailable. Please retry.';
- }
+ publicDataPromise=(async()=>{
+  try{
+   const result=await api('public-data');
+   schedules=result.schedule||[];
+   events=result.events||[];
+   publicDataLoaded=true;
+   savePublicCache();
+  }catch{
+   connectionIssue='Live data is temporarily unavailable. Please retry.';
+  }finally{
+   publicDataPromise=null;
+  }
+ })();
+ return publicDataPromise;
 }
 function schedule(day,meal){return schedules.find(x=>Number(x.weekday)===day&&x.meal===meal)||null}
 function eventsFor(day,meal){const date=dateFor(day);return events.filter(e=>e.event_date===date&&e.meal===meal)}
@@ -281,6 +289,9 @@ async function renderOverall(){
  const heading='<div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Community ratings for the selected weekday.</p>';
  app.innerHTML='<button class="back" id="back">← Home</button>'+heading+dayNav()+'<div class="empty">Preparing live results…</div>';
  bindBack('home');bindDays();
+ // Share the startup request and wait for event metadata before building event meters.
+ await loadPublic();
+ if(id!==pageVersion||state.page!=='overall')return;
  const date=dateFor(state.day);
  const regular=[
   {rating_date:date,meal:'breakfast',category:'all',event_id:null},
