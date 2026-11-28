@@ -191,3 +191,6 @@ textarea,.field{background:#0b0f18;border-color:rgba(160,170,200,.22);color:#f4f
 @media(hover:hover){.tile:hover,.choice:hover{transform:translateY(-3px);border-color:rgba(208,140,255,.52);box-shadow:0 16px 34px rgba(0,0,0,.25)}.primary:hover{filter:brightness(1.07)}.secondary:hover,.back:hover{border-color:rgba(208,140,255,.5)}}
 @media(max-width:700px){header{margin-bottom:23px}.hero{padding:22px 18px;border-radius:22px}.tile{min-height:135px}.result-card .meter-layout{gap:8px}.result-heading h2{font-size:17px}}
 @media(prefers-reduced-motion:reduce){.meter-segment,.day,.tile,.choice,.primary,.secondary,.back{transition:none!important}}
+
+/* SVG meter labels ease with the animated segment geometry. */
+.number{transition:fill .25s ease}
