@@ -30,7 +30,7 @@ jobs:
       - name: Smoke-test public API and reject unauthenticated admin actions
         env:
           SUPABASE_URL: https://vvgvjfghtkhnqvbhjqcb.supabase.co
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_ANON_KEY: sb_publishable_T_WBo0M8GVAE3Eo-bY6QQA_E1YX20vm
         shell: bash
         run: |
           set -euo pipefail
