@@ -112,11 +112,11 @@ function paintMeter(panel,summary){
 
 function setTheme(){document.body.className=state.page==='rate'?'cosmic':state.page==='overall'?'aurora':''}
 let historyDepth=0;
-function snap(){return {tuRatings:true,page:state.page,day:state.day,weekOffset:state.weekOffset||0,meal:state.meal,category:state.category,depth:historyDepth}}
+function snap(){return {tuRatings:true,page:state.page,day:state.day,meal:state.meal,category:state.category,depth:historyDepth}}
 function go(p){state.page=p;historyDepth++;try{history.pushState(snap(),'',p==='admin'?ADMIN_HASH:'#'+p)}catch{historyDepth=Math.max(0,historyDepth-1)}render()}
 function back(fallback){if(historyDepth>0){history.back();return}state.page=fallback||'home';render()}
 window.addEventListener('popstate',e=>{
- if(e.state?.tuRatings){state.page=e.state.page||'home';state.day=e.state.day??state.day;state.weekOffset=e.state.weekOffset??0;state.meal=e.state.meal||'';state.category=e.state.category||'';historyDepth=Math.max(0,e.state.depth||0)}
+ if(e.state?.tuRatings){state.page=e.state.page||'home';state.day=e.state.day??state.day;state.meal=e.state.meal||'';state.category=e.state.category||'';historyDepth=Math.max(0,e.state.depth||0)}
  else{state.page='home';state.meal='';state.category='';historyDepth=0}
  render();
 });
@@ -224,13 +224,13 @@ async function renderOverall(){
  const veg=[norm[2],...dayEvents.map((e,i)=>e.meal==='dinner'&&e.category==='veg'?extra[i]:null).filter(Boolean)];
  const nonveg=[norm[3],...dayEvents.map((e,i)=>e.meal==='dinner'&&e.category==='nonveg'?extra[i]:null).filter(Boolean)];
  const all=[...breakfast,...lunch,...veg,...nonveg];
- app.innerHTML='<button class="back" id="back">← Home</button><div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Five meters based on actual submitted Taste ratings.</p>'+dayNav()+
+ app.innerHTML='<button class="back" id="back">← Home</button><div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Five meters based on actual submitted Taste ratings.</p>'+
  resultCard('Overall Experience','All meal sessions · '+DAYS[state.day],sumSummaries(all))+
  resultCard('Dinner · Veg','Vegetarian dinner · '+DAYS[state.day],sumSummaries(veg))+
  resultCard('Dinner · Non-Veg','Non-vegetarian dinner · '+DAYS[state.day],sumSummaries(nonveg))+
  resultCard('Lunch Overall','Lunch · '+DAYS[state.day],sumSummaries(lunch))+
  resultCard('Breakfast Overall','Breakfast · '+DAYS[state.day],sumSummaries(breakfast));
- bindBack('home');bindDays();
+ bindBack('home');
 }
 async function verifyAdmin(){
  if(!adminSession?.access_token)return false;
