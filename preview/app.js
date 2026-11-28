@@ -52,9 +52,7 @@ async function loadPublic(){
  connectionIssue='';
  const results=await Promise.allSettled([api('weekly-schedule'),api('active-events')]);
  if(results[0].status==='fulfilled')schedules=results[0].value.schedule||[];
- else schedules=[];
  if(results[1].status==='fulfilled')events=results[1].value.events||[];
- else events=[];
  savePublicCache();
  const failures=results.filter(x=>x.status==='rejected');
  if(failures.length)connectionIssue=failures.length===2?'Live data is temporarily unavailable. Please retry.':'Some live data could not be loaded. Please retry to refresh it.';
@@ -144,8 +142,6 @@ function renderCategory(){
 }
 async function renderRate(){
  setTheme();const id=++pageVersion,s=sessionFor(state.day,state.meal,state.category);let saved=editRecord(s);
- app.innerHTML='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1><div id="liveMeter" class="empty">Loading live ratings…</div>';
- bindBack(state.meal==='dinner'?'category':'home');
  let cachedSummary=summaryCache.get(sessionKey(s));
   if(!cachedSummary){try{cachedSummary=JSON.parse(safeRead('tu_v2_summary_'+sessionKey(s))||'null');if(cachedSummary?.value)summaryCache.set(sessionKey(s),cachedSummary)}catch{}}
   let liveCounts=counts(cachedSummary?.value||{});
