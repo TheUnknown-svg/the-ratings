@@ -7,6 +7,10 @@ const AUTH_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/auth/v1';
 const API_KEY='sb_publishable_T_WBo0M8GVAE3Eo-bY6QQA_E1YX20vm';
 const app=document.getElementById('app');
 let schedules=[],events=[],pageVersion=0,poll=null,adminSession=null,connectionIssue='';
+const summaryCache=new Map(),summaryRequests=new Map();
+const PUBLIC_CACHE_KEY='tu_v2_public_cache';
+function restorePublicCache(){try{const x=JSON.parse(safeRead(PUBLIC_CACHE_KEY)||'null');if(x&&Date.now()-x.savedAt<86400000){schedules=x.schedules||[];events=x.events||[]}}catch{}}
+function savePublicCache(){safeWrite(PUBLIC_CACHE_KEY,JSON.stringify({savedAt:Date.now(),schedules,events}))}
 const ADMIN_HASH='#manage-7f3a9c2e';
 let state={page:'home',day:currentBishkek().weekday,meal:'',category:'',session:null};
 function currentBishkek(){
@@ -52,6 +56,7 @@ async function loadPublic(){
  else schedules=[];
  if(results[1].status==='fulfilled')events=results[1].value.events||[];
  else events=[];
+ savePublicCache();
  const failures=results.filter(x=>x.status==='rejected');
  if(failures.length)connectionIssue=failures.length===2?'Live data is temporarily unavailable. Please retry.':'Some live data could not be loaded. Please retry to refresh it.';
 }
@@ -110,7 +115,7 @@ function renderCategory(){
  bindBack('home');app.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{state.category=b.dataset.cat;go('rate')});
 }
 async function renderRate(){
- setTheme();const id=++pageVersion,s=sessionFor(state.day,state.meal,state.category),saved=editRecord(s);
+ setTheme();const id=++pageVersion,s=sessionFor(state.day,state.meal,state.category);let saved=editRecord(s);
  app.innerHTML='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1><div id="liveMeter" class="empty">Loading live ratings…</div>';
  bindBack(state.meal==='dinner'?'category':'home');
  let summary;try{summary=await getSummary(s)}catch{summary={}}
@@ -121,7 +126,7 @@ async function renderRate(){
   app.innerHTML=head+meterPanel+'<section class="panel"><p>Past and future sessions are view-only. Today\'s meal ratings stay open 24/7.</p></section>';bindBack(state.meal==='dinner'?'category':'home');return;
  }
  const existing=Number(saved?.taste_rating)||0,reviewText=saved?.review||'';
-  const savedNotice=saved?'<section class="panel edit-saved"><div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button></section>':'';
+  const savedNotice=saved?'<section class="panel edit-saved" id="savedNotice"><div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button></section>':'';
   app.innerHTML=head+meterPanel+savedNotice+'<section class="panel" id="votePanel" '+(saved?'hidden':'')+'><h2>'+(saved?'Edit your rating':'Submit your rating')+'</h2><p>Choose one of the four options.</p><form id="vote"><div class="rating"><b>Taste</b><div class="rating-buttons">'+LEVELS.map((x,i)=>'<button type="button" class="rate '+(existing===i+1?'selected':'')+'" data-v="'+(i+1)+'">'+x+'</button>').join('')+'</div></div><div class="review-box"><h3>Write a Review</h3><textarea id="reviewText" maxlength="500" rows="4" placeholder="Write your review here...">'+esc(reviewText)+'</textarea><div class="review-meta"><span class="notice">Optional · Anonymous</span><span class="notice" id="reviewCount">'+reviewText.length+'/500</span></div></div><div class="row" style="margin-top:15px"><span class="notice">Edit access is private and saved on this device.</span><button class="primary" id="send" '+(!existing?'disabled':'')+'>'+(saved?'Update my rating':'Post rating')+'</button></div><div id="message" class="notice" role="status" style="margin-top:10px"></div></form></section>';
   const editToggle=document.getElementById('editToggle');
   if(editToggle)editToggle.onclick=()=>{document.getElementById('votePanel').hidden=false;editToggle.hidden=true;};
@@ -136,12 +141,21 @@ async function renderRate(){
    const reviewValue=review.value.trim();
    if(saved?.edit_token){
     await api('edit-rating',{edit_token:saved.edit_token,taste_rating:chosen,review:reviewValue});
-    saveEditRecord(s,{...saved,taste_rating:chosen,review:reviewValue});
+    saved={...saved,taste_rating:chosen,review:reviewValue};
+    saveEditRecord(s,saved);
    }else{
     const result=await api('submit-rating',{visitor_token:visitorToken(),meal:s.meal,category:s.category,taste_rating:chosen,review:reviewValue,event_id:s.event_id||undefined});
-    saveEditRecord(s,{edit_token:result.edit_token,taste_rating:chosen,review:reviewValue});
+    saved={edit_token:result.edit_token,taste_rating:chosen,review:reviewValue};
+    saveEditRecord(s,saved);
    }
-   await renderRate();
+   summaryCache.delete(sessionKey(s));
+   await updateRateMeter(s);
+   let notice=document.getElementById('savedNotice');
+   if(!notice){notice=document.createElement('section');notice.id='savedNotice';notice.className='panel edit-saved';document.getElementById('votePanel').before(notice)}
+   notice.innerHTML='<div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button>';
+   document.getElementById('votePanel').hidden=true;
+   document.getElementById('editToggle').onclick=()=>{document.getElementById('votePanel').hidden=false;notice.hidden=true};
+   msg.textContent='';
   }catch(err){msg.textContent=err.message||'Unable to submit rating.';btn.disabled=false;btn.textContent=saved?'Update rating':'Post'}
  };
 }
@@ -228,8 +242,8 @@ function render(){
  if(poll){clearInterval(poll);poll=null}
  if(state.page==='home')renderHome();
  else if(state.page==='category')renderCategory();
- else if(state.page==='rate'){renderRate();poll=setInterval(()=>{if(document.visibilityState==='visible'&&state.page==='rate')refreshRateMeter()},25000)}
- else if(state.page==='overall'){renderOverall();poll=setInterval(()=>{if(document.visibilityState==='visible'&&state.page==='overall')renderOverall()},25000)}
+ else if(state.page==='rate'){renderRate();poll=setInterval(()=>{if(document.visibilityState==='visible'&&state.page==='rate')refreshRateMeter()},45000)}
+ else if(state.page==='overall'){renderOverall();poll=setInterval(()=>{if(document.visibilityState==='visible'&&state.page==='overall')renderOverall()},60000)}
  else if(state.page==='admin')renderAdmin();
 }
 async function refreshRateMeter(){
@@ -237,8 +251,9 @@ async function refreshRateMeter(){
 }
 if(location.hash===ADMIN_HASH)state.page='admin';
 historyDepth=0;try{history.replaceState(snap(),'',state.page==='admin'?ADMIN_HASH:'#'+state.page)}catch{}
-app.innerHTML='<div class="empty">Connecting to live ratings…</div>';
-loadPublic().then(render).catch(err=>{app.innerHTML='<div class="empty">Unable to connect to live ratings: '+esc(err.message)+'</div><button class="secondary" id="retry">Retry</button>';document.getElementById('retry').onclick=()=>{app.innerHTML='<div class="empty">Connecting…</div>';loadPublic().then(render).catch(e=>{app.innerHTML='<div class="empty">'+esc(e.message)+'</div>'})}});
+restorePublicCache();
+render();
+loadPublic().then(()=>{if(state.page==='home'||state.page==='category')render()}).catch(()=>{});
 
 function getPercentLabels(counts){
  const total=counts.reduce((a,b)=>a+b,0);
