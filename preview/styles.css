@@ -219,3 +219,26 @@ textarea,.field{background:#0b0f18;border-color:rgba(160,170,200,.22);color:#f4f
  .results-grid .result-card{animation:none!important;transition:none!important}
  .results-grid .result-card *{scroll-behavior:auto!important;transition:none!important}
 }
+
+/* Apply entrance motion despite the legacy panel animation reset. */
+@keyframes appSectionIn{
+ from{opacity:0;transform:translate3d(0,10px,0)}
+ to{opacity:1;transform:translate3d(0,0,0)}
+}
+#app>.hero,#app>.days,#app>.grid,#app>.choicegrid,#app>.panel,#app>.results-summary,#app>.results-grid,#app>.notice,#app>.empty{
+ animation:appSectionIn .34s cubic-bezier(.2,.75,.25,1) both!important;
+}
+#app>.days{animation-delay:25ms!important}
+#app>.grid,#app>.choicegrid{animation-delay:55ms!important}
+#app>.results-summary{animation-delay:45ms!important}
+#app>.results-grid{animation-delay:65ms!important}
+.results-grid .result-card{animation:resultsCardIn .42s cubic-bezier(.2,.75,.25,1) both!important}
+.results-grid .result-card:nth-child(1){animation-delay:65ms!important}
+.results-grid .result-card:nth-child(2){animation-delay:105ms!important}
+.results-grid .result-card:nth-child(3){animation-delay:145ms!important}
+.results-grid .result-card:nth-child(4){animation-delay:185ms!important}
+.results-grid .result-card:nth-child(5){animation-delay:225ms!important}
+@media(prefers-reduced-motion:reduce){
+ #app>.hero,#app>.days,#app>.grid,#app>.choicegrid,#app>.panel,#app>.results-summary,#app>.results-grid,#app>.notice,#app>.empty,
+ .results-grid .result-card{animation:none!important}
+}
