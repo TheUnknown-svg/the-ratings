@@ -25,7 +25,6 @@ function dateFor(day){
  d.setUTCDate(d.getUTCDate()-now.weekday+day);
  return d.toISOString().slice(0,10);
 }
-function isToday(day){return dateFor(day)===currentBishkek().date}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function safeRead(k){try{return localStorage.getItem(k)}catch{return null}}
 function safeWrite(k,v){try{localStorage.setItem(k,v);return true}catch{return false}}
@@ -147,7 +146,9 @@ async function renderRate(){
  setTheme();const id=++pageVersion,s=sessionFor(state.day,state.meal,state.category);let saved=editRecord(s);
  app.innerHTML='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1><div id="liveMeter" class="empty">Loading live ratings…</div>';
  bindBack(state.meal==='dinner'?'category':'home');
- const cachedSummary=summaryCache.get(sessionKey(s));let liveCounts=counts(cachedSummary?.value||{});
+ let cachedSummary=summaryCache.get(sessionKey(s));
+  if(!cachedSummary){try{cachedSummary=JSON.parse(safeRead('tu_v2_summary_'+sessionKey(s))||'null');if(cachedSummary?.value)summaryCache.set(sessionKey(s),cachedSummary)}catch{}}
+  let liveCounts=counts(cachedSummary?.value||{});
  const meterPanel='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:liveCounts},'Taste')+'</section>';
  const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
  let savedRecord=saved;
@@ -165,21 +166,26 @@ async function renderRate(){
   const btn=document.getElementById('send'),msg=document.getElementById('message');btn.disabled=true;btn.textContent=savedRecord?'Updating…':'Posting…';
   try{
    const reviewValue=review.value.trim(),previous=Number(savedRecord?.taste_rating)||0;
-   let nextRecord;
-   if(savedRecord?.edit_token){
-    await api('edit-rating',{edit_token:savedRecord.edit_token,taste_rating:chosen,review:reviewValue});
-    nextRecord={...savedRecord,taste_rating:chosen,review:reviewValue};
-   }else{
-    const result=await api('submit-rating',{visitor_token:visitorToken(),rating_date:s.rating_date,meal:s.meal,category:s.category,taste_rating:chosen,review:reviewValue,event_id:s.event_id||undefined});
-    nextRecord={edit_token:result.edit_token,taste_rating:chosen,review:reviewValue};
-   }
-   saveEditRecord(s,nextRecord);savedRecord=nextRecord;
-   if(previous>0)liveCounts[previous-1]=Math.max(0,liveCounts[previous-1]-1);
-   liveCounts[chosen-1]++;
-   summaryCache.set(sessionKey(s),{at:Date.now(),value:{total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]}});
-   const nextSummary={total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]};
-   summaryCache.set(sessionKey(s),{at:Date.now(),value:nextSummary});safeWrite('tu_v2_summary_'+sessionKey(s),JSON.stringify({at:Date.now(),value:nextSummary}));
-   paintMeter(app.querySelector('#liveMeter'),nextSummary);
+   let nextRecord,serverSummary=null;
+    if(savedRecord?.edit_token){
+     const result=await api('edit-rating',{edit_token:savedRecord.edit_token,taste_rating:chosen,review:reviewValue});
+     serverSummary=result.summary||null;
+     nextRecord={...savedRecord,taste_rating:chosen,review:reviewValue};
+    }else{
+     const result=await api('submit-rating',{visitor_token:visitorToken(),rating_date:s.rating_date,meal:s.meal,category:s.category,taste_rating:chosen,review:reviewValue,event_id:s.event_id||undefined});
+     serverSummary=result.summary||null;
+     nextRecord={edit_token:result.edit_token,taste_rating:chosen,review:reviewValue};
+    }
+    saveEditRecord(s,nextRecord);savedRecord=nextRecord;
+    if(serverSummary)liveCounts=counts(serverSummary);
+    else{
+     if(previous>0)liveCounts[previous-1]=Math.max(0,liveCounts[previous-1]-1);
+     liveCounts[chosen-1]++;
+    }
+    const nextSummary=serverSummary||{total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]};
+    summaryCache.set(sessionKey(s),{at:Date.now(),value:nextSummary});
+    safeWrite('tu_v2_summary_'+sessionKey(s),JSON.stringify({at:Date.now(),value:nextSummary}));
+    paintMeter(app.querySelector('#liveMeter'),nextSummary);
    msg.textContent='Saved — your rating meter has been updated.';
    btn.textContent='Update my rating';btn.disabled=false;
   }catch(err){msg.textContent=err.message||'Unable to submit rating.';btn.disabled=false;btn.textContent=savedRecord?'Update rating':'Post'}
