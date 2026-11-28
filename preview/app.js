@@ -411,8 +411,8 @@ function timeValue(v){return String(v||'').slice(0,5)}
 async function renderAdmin(){
  setTheme();const ok=await verifyAdmin();if(!ok){renderAdminLogin();return}
  const id=++pageVersion;app.innerHTML='<div class="kicker">SECURE ADMINISTRATION</div><h1>Admin studio</h1><div class="empty">Loading admin workspace…</div>';
- let s,e,dash,msgs,audit;
- try{[s,e,dash,msgs,audit]=await Promise.all([api('weekly-schedule',{},adminSession.access_token),api('admin-events',{},adminSession.access_token),api('admin-dashboard',{},adminSession.access_token),api('admin-list-messages',{},adminSession.access_token),api('admin-audit-history',{},adminSession.access_token)])}
+ let data,s,e,dash,msgs,audit;
+ try{data=await api('admin-data',{},adminSession.access_token);s={schedule:data.schedule||[]};e={events:data.events||[]};dash={stats:data.stats||{}};msgs={messages:data.messages||[]};audit={logs:data.logs||[]}}
  catch(err){app.innerHTML='<div class="empty">'+esc(err.message)+'</div><button class="secondary" id="adminRetry">Retry</button>';document.getElementById('adminRetry').onclick=renderAdmin;return}
  if(id!==pageVersion)return;schedules=s.schedule||[];events=e.events||[];let messageRows=msgs.messages||[];const stats=dash.stats||{};
  const scheduleFields=DAYS.map((day,d)=>'<section class="panel admin-day"><h2>'+day+'</h2><div class="admin-grid">'+MEALS.map(m=>{const item=schedules.find(x=>Number(x.weekday)===d&&x.meal===m)||{opens_at:'07:00:00',closes_at:'10:00:00',veg_enabled:true,nonveg_enabled:false};return '<div class="adminbox" data-schedule="'+d+'-'+m+'"><h3>'+m[0].toUpperCase()+m.slice(1)+'</h3><label>Opens</label><input class="field" type="time" id="open-'+d+'-'+m+'" value="'+timeValue(item.opens_at)+'"><label>Closes</label><input class="field" type="time" id="close-'+d+'-'+m+'" value="'+timeValue(item.closes_at)+'"><label class="checkline"><input type="checkbox" id="veg-'+d+'-'+m+'" '+(item.veg_enabled?'checked':'')+'> Veg enabled</label><label class="checkline"><input type="checkbox" id="nonveg-'+d+'-'+m+'" '+(item.nonveg_enabled?'checked':'')+'> Non-Veg enabled</label></div>'}).join('')+'</div></section>').join('');
