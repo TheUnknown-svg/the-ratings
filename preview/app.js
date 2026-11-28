@@ -50,12 +50,14 @@ async function api(action,data={},token=null){
 }
 async function loadPublic(){
  connectionIssue='';
- const results=await Promise.allSettled([api('weekly-schedule'),api('active-events')]);
- if(results[0].status==='fulfilled')schedules=results[0].value.schedule||[];
- if(results[1].status==='fulfilled')events=results[1].value.events||[];
- savePublicCache();
- const failures=results.filter(x=>x.status==='rejected');
- if(failures.length)connectionIssue=failures.length===2?'Live data is temporarily unavailable. Please retry.':'Some live data could not be loaded. Please retry to refresh it.';
+ try{
+  const result=await api('public-data');
+  schedules=result.schedule||[];
+  events=result.events||[];
+  savePublicCache();
+ }catch{
+  connectionIssue='Live data is temporarily unavailable. Please retry.';
+ }
 }
 function schedule(day,meal){return schedules.find(x=>Number(x.weekday)===day&&x.meal===meal)||null}
 function eventsFor(day,meal){const date=dateFor(day);return events.filter(e=>e.event_date===date&&e.meal===meal)}
