@@ -6,7 +6,7 @@ const API_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/functions/v1/unknown-rat
 const AUTH_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/auth/v1';
 const API_KEY='sb_publishable_T_WBo0M8GVAE3Eo-bY6QQA_E1YX20vm';
 const app=document.getElementById('app');
-let schedules=[],events=[],pageVersion=0,poll=null,adminSession=null,connectionIssue='';
+let schedules=[],events=[],pageVersion=0,poll=null,adminSession=null,connectionIssue='',overallRefresh=null;
 const summaryCache=new Map(),summaryRequests=new Map();
 const PUBLIC_CACHE_KEY='tu_v2_public_cache';
 function restorePublicCache(){try{const x=JSON.parse(safeRead(PUBLIC_CACHE_KEY)||'null');if(x&&Date.now()-x.savedAt<86400000){schedules=x.schedules||[];events=x.events||[]}}catch{}}
@@ -99,7 +99,7 @@ function paintMeter(panel,summary){
   const nextPaths=fresh.querySelectorAll('.meter-segment'),oldPaths=current.querySelectorAll('.meter-segment');
   nextPaths.forEach((next,i)=>{
    const old=oldPaths[i];if(!old)return;
-   ['stroke-dasharray','stroke-dashoffset','opacity','stroke-linecap'].forEach(attr=>old.setAttribute(attr,next.getAttribute(attr)||''));
+   ['d','stroke','stroke-width','opacity','stroke-linecap'].forEach(attr=>old.setAttribute(attr,next.getAttribute(attr)||''));
    old.setAttribute('data-count',next.getAttribute('data-count')||'0');
   });
   current.setAttribute('aria-label',fresh.getAttribute('aria-label')||'');
@@ -128,9 +128,9 @@ function bindDays(){
 
 }
 function bindBack(fallback){const b=document.getElementById('back');if(b)b.onclick=()=>back(fallback)}
-function resultCard(title,subtitle,summary){
+function resultCard(title,subtitle,summary,key){
  const c=Array.isArray(summary?.counts)?summary.counts:counts(summary);
- return '<section class="panel result-card"><div class="result-heading"><div><h2>'+esc(title)+'</h2><p>'+esc(subtitle)+'</p></div><span class="pill">'+total(c)+' ratings</span></div>'+meter({counts:c},title)+'</section>';
+ return '<section class="panel result-card" data-result-card="'+esc(key||'')+'"><div class="result-heading"><div><h2>'+esc(title)+'</h2><p>'+esc(subtitle)+'</p></div><span class="pill">'+total(c)+' ratings</span></div>'+meter({counts:c},title)+'</section>';
 }
 function renderHome(){
  setTheme();
@@ -188,6 +188,13 @@ async function renderRate(){
     summaryCache.set(sessionKey(s),{at:Date.now(),value:nextSummary});
     safeWrite('tu_v2_summary_'+sessionKey(s),JSON.stringify({at:Date.now(),value:nextSummary}));
     paintMeter(app.querySelector('#liveMeter'),nextSummary);
+   const summaryKey=sessionKey(s);
+   summaryRequests.delete(summaryKey);
+   getSummary(s,true).then(authoritative=>{
+    if(id!==pageVersion||state.page!=='rate')return;
+    liveCounts=counts(authoritative);
+    paintMeter(app.querySelector('#liveMeter'),authoritative);
+   }).catch(()=>{});
    msg.textContent='Saved — your rating meter has been updated.';
    btn.textContent='Update my rating';btn.disabled=false;
   }catch(err){liveCounts=beforeCounts;paintMeter(app.querySelector('#liveMeter'),{total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]});msg.textContent=err.message||'Unable to submit rating.';btn.disabled=false;btn.textContent=savedRecord?'Update rating':'Post'}
@@ -205,7 +212,7 @@ async function renderRate(){
 async function renderOverall(){
  setTheme();const id=++pageVersion;
  const heading='<div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Community ratings for the selected weekday.</p>';
- app.innerHTML='<button class="back" id="back">← Home</button>'+heading+dayNav()+'<div class="empty">Loading live results…</div>';
+ app.innerHTML='<button class="back" id="back">← Home</button>'+heading+dayNav()+'<div class="empty">Preparing live results…</div>';
  bindBack('home');bindDays();
  const date=dateFor(state.day);
  const regular=[
@@ -216,36 +223,60 @@ async function renderOverall(){
  ];
  const dayEvents=events.filter(e=>e.event_date===date);
  const sessions=[...regular,...dayEvents.map(e=>({event_id:e.id}))];
- const settled=await Promise.allSettled(sessions.map(getSummary));
- if(id!==pageVersion)return;
- const resolved=settled.map(x=>x.status==='fulfilled'?x.value:{total_ratings:0,very_bad:0,bad:0,good:0,very_good:0});
- const failed=settled.filter(x=>x.status==='rejected').length;
- const base=resolved.slice(0,4),eventSummaries=resolved.slice(4);
- const eventGroups={breakfast:[],lunch:[],veg:[],nonveg:[]};
+ const results=sessions.map(()=>({total_ratings:0,very_bad:0,bad:0,good:0,very_good:0}));
+ const groups={breakfast:[0],lunch:[1],veg:[2],nonveg:[3],overall:sessions.map((_,i)=>i)};
  dayEvents.forEach((event,i)=>{
-  const summary=eventSummaries[i];
-  if(event.meal==='breakfast')eventGroups.breakfast.push(summary);
-  else if(event.meal==='lunch')eventGroups.lunch.push(summary);
-  else if(event.meal==='dinner'&&event.category==='veg')eventGroups.veg.push(summary);
-  else if(event.meal==='dinner'&&event.category==='nonveg')eventGroups.nonveg.push(summary);
+  const index=i+4;
+  if(event.meal==='breakfast')groups.breakfast.push(index);
+  else if(event.meal==='lunch')groups.lunch.push(index);
+  else if(event.meal==='dinner'&&event.category==='veg')groups.veg.push(index);
+  else if(event.meal==='dinner'&&event.category==='nonveg')groups.nonveg.push(index);
  });
- const breakfast=[base[0],...eventGroups.breakfast];
- const lunch=[base[1],...eventGroups.lunch];
- const veg=[base[2],...eventGroups.veg];
- const nonveg=[base[3],...eventGroups.nonveg];
- const all=[...breakfast,...lunch,...veg,...nonveg];
- const warning=failed?'<div class="empty results-warning" role="status">'+failed+' result '+(failed===1?'request':'requests')+' could not be loaded. Other meters are still shown. <button type="button" class="secondary" id="retryResults">Retry</button></div>':'';
+ const sumGroup=key=>sumSummaries(groups[key].map(i=>results[i]));
+ const paintCard=key=>{
+  const panel=app.querySelector('[data-result-card="'+key+'"]');
+  if(!panel)return;
+  const summary=sumGroup(key);
+  paintMeter(panel,summary);
+  const pill=panel.querySelector('.pill');
+  if(pill)pill.textContent=summary.total_ratings+' ratings';
+ };
+ const paintCards=()=>['overall','veg','nonveg','lunch','breakfast'].forEach(paintCard);
+ const setStatus=failed=>{
+  const node=document.getElementById('resultsStatus');if(!node)return;
+  node.innerHTML=failed?'<span>'+failed+' result '+(failed===1?'request':'requests')+' could not be loaded. Other meters remain available.</span> <button type="button" class="secondary" id="retryResults">Retry</button>':'';
+  const retry=document.getElementById('retryResults');
+  if(retry)retry.onclick=()=>{retry.disabled=true;retry.textContent='Retrying…';summaryCache.clear();summaryRequests.clear();renderOverall()};
+ };
+ const zero={total_ratings:0,very_bad:0,bad:0,good:0,very_good:0};
  app.innerHTML='<button class="back" id="back">← Home</button>'+heading+dayNav()+
  '<div class="results-summary"><span class="results-day">'+DAYS[state.day]+'</span><span> · Selected menu day</span></div>'+
- warning+'<div class="results-grid">'+
- resultCard('Overall Experience','All meals and dinner categories',sumSummaries(all))+
- resultCard('Dinner · Veg','Vegetarian dinner',sumSummaries(veg))+
- resultCard('Dinner · Non-Veg','Non-vegetarian dinner',sumSummaries(nonveg))+
- resultCard('Lunch Overall','Lunch ratings',sumSummaries(lunch))+
- resultCard('Breakfast Overall','Breakfast ratings',sumSummaries(breakfast))+
+ '<div id="resultsStatus" class="results-status" role="status" aria-live="polite"></div>'+
+ '<div class="results-grid">'+
+ resultCard('Overall Experience','All meals and dinner categories',zero,'overall')+
+ resultCard('Dinner · Veg','Vegetarian dinner',zero,'veg')+
+ resultCard('Dinner · Non-Veg','Non-vegetarian dinner',zero,'nonveg')+
+ resultCard('Lunch Overall','Lunch ratings',zero,'lunch')+
+ resultCard('Breakfast Overall','Breakfast ratings',zero,'breakfast')+
  '</div>';
- bindBack('home');bindDays();
- const retry=document.getElementById('retryResults');if(retry)retry.onclick=()=>{retry.disabled=true;retry.textContent='Retrying…';summaryCache.clear();renderOverall()};
+ bindBack('home');bindDays();paintCards();
+ const pending=sessions.map((session,i)=>getSummary(session).then(summary=>{
+  if(id===pageVersion&&state.page==='overall'){results[i]=summary;paintCards()}
+  return summary;
+ }));
+ const settled=await Promise.allSettled(pending);
+ if(id!==pageVersion||state.page!=='overall')return;
+ settled.forEach((item,i)=>{if(item.status==='fulfilled')results[i]=item.value});
+ paintCards();
+ setStatus(settled.filter(x=>x.status==='rejected').length);
+ overallRefresh=async()=>{
+  if(id!==pageVersion||state.page!=='overall')return;
+  const refreshed=await Promise.allSettled(sessions.map(session=>getSummary(session,true)));
+  if(id!==pageVersion||state.page!=='overall')return;
+  refreshed.forEach((item,i)=>{if(item.status==='fulfilled')results[i]=item.value});
+  paintCards();
+  setStatus(refreshed.filter(x=>x.status==='rejected').length);
+ };
 }
 async function verifyAdmin(){
  if(!adminSession?.access_token)return false;
@@ -302,7 +333,7 @@ function render(){
  if(state.page==='home')renderHome();
  else if(state.page==='category')renderCategory();
  else if(state.page==='rate'){renderRate();poll=setInterval(()=>{if(document.visibilityState==='visible'&&state.page==='rate')refreshRateMeter()},20000)}
- else if(state.page==='overall'){renderOverall()}
+ else if(state.page==='overall'){renderOverall();poll=setInterval(()=>{if(document.visibilityState==='visible'&&state.page==='overall'&&overallRefresh)overallRefresh()},30000)}
  else if(state.page==='admin')renderAdmin();
 }
 async function refreshRateMeter(){
@@ -325,25 +356,20 @@ function getPercentLabels(counts){
  });
 }
 function meter(data,title){
- // Sanitize counts once. Every meter (live Taste and all Overall cards)
- // uses this exact renderer so the geometry cannot diverge between pages.
  const source=Array.isArray(data&&data.counts)?data.counts:[];
- const counts=LEVELS.map((_,i)=>{
+ const safeCounts=LEVELS.map((_,i)=>{
   const n=Number(source[i]??0);
   return Number.isFinite(n)&&n>0?Math.floor(n):0;
  });
- const total=counts.reduce((a,b)=>a+b,0);
- const labels=getPercentLabels(counts);
- const peakIndex=total?counts.indexOf(Math.max(...counts)):-1;
- const peakPct=total?Math.round(counts[peakIndex]*100/total):0;
-
- // Exact 180-degree upper semicircle. Each category gets a share of the
- // remaining arc after fixed black separators are reserved. Butt caps keep
- // the separators open instead of allowing rounded ends to collide.
+ const totalVotes=safeCounts.reduce((a,b)=>a+b,0);
+ const labels=getPercentLabels(safeCounts);
+ const peakIndex=totalVotes?safeCounts.indexOf(Math.max(...safeCounts)):-1;
+ const peakPct=totalVotes?Math.round(safeCounts[peakIndex]*100/totalVotes):0;
  const cx=150,cy=130,r=105,stroke=20;
- const gap=counts.filter(n=>n>0).length>1?2.8:0;
- const usable=Math.max(0,180-gap*(counts.filter(n=>n>0).length-1));
- const point=(deg)=>{
+ const activeCount=safeCounts.filter(n=>n>0).length;
+ const gap=activeCount>1?2.8:0;
+ const usable=Math.max(0,180-gap*(activeCount-1));
+ const point=deg=>{
   const rad=deg*Math.PI/180;
   return [cx+r*Math.cos(rad),cy-r*Math.sin(rad)];
  };
@@ -352,23 +378,22 @@ function meter(data,title){
   const sweep=from-to,large=sweep>180?1:0;
   return `M ${sx.toFixed(3)} ${sy.toFixed(3)} A ${r} ${r} 0 ${large} 1 ${ex.toFixed(3)} ${ey.toFixed(3)}`;
  };
- const track=arcPath(180,0),circumference=Math.PI*r;
- let cursor=0;
- const segments=counts.map((n,i)=>{
-  const pct=total?n/total*100:0,sweep=n?usable*n/total:0;
-  const segmentLength=sweep*circumference/180,offset=cursor*circumference/180;
-  if(n)cursor+=sweep+gap;
-  const cap=pct>=2?'round':'butt';
-  return `<path class="meter-segment" data-index="${i}" data-count="${n}" d="${track}" fill="none" stroke="${COLORS[i]}" stroke-width="${stroke}" stroke-linecap="${cap}" stroke-linejoin="round" stroke-dasharray="${segmentLength.toFixed(3)} ${(circumference-segmentLength).toFixed(3)}" stroke-dashoffset="-${offset.toFixed(3)}" opacity="${n?1:0}"/>`;
+ const track=arcPath(180,0);
+ let cursor=180;
+ const segments=safeCounts.map((n,i)=>{
+  const sweep=totalVotes&&n?usable*n/totalVotes:0;
+  const start=cursor,end=cursor-sweep,d=arcPath(start,end);
+  if(n)cursor=end-gap;
+  return `<path class="meter-segment" data-index="${i}" data-count="${n}" d="${d}" fill="none" stroke="${COLORS[i]}" stroke-width="${stroke}" stroke-linecap="butt" stroke-linejoin="round" opacity="${n?1:0}"/>`;
  }).join('');
- const center=total?`${peakPct}%`:'—';
- const voteText=`${total} ${total===1?'vote':'votes'}`;
- const safeTitle=String(title||'Rating').replace(/[&<>\"]/g,'');
+ const center=totalVotes?`${peakPct}%`:'—';
+ const voteText=`${totalVotes} ${totalVotes===1?'vote':'votes'}`;
+ const safeTitle=String(title||'Rating').replace(/[&<>"]/g,'');
  return `<div class="meter-layout"><div class="meter">
- <svg class="gauge" viewBox="10 5 280 155" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${safeTitle} meter: ${total?center:'no votes'}; ${voteText}" preserveAspectRatio="xMidYMid meet">
+ <svg class="gauge" viewBox="10 5 280 155" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${safeTitle} meter: ${totalVotes?center:'no votes'}; ${voteText}" preserveAspectRatio="xMidYMid meet">
  <path class="meter-track" d="${track}" fill="none" stroke="#242424" stroke-width="${stroke}" stroke-linecap="butt"/>
  ${segments}
- <text x="150" y="104" text-anchor="middle" class="number" style="fill:${total?COLORS[peakIndex]:'#f5f5f5'}">${center}</text>
+ <text x="150" y="104" text-anchor="middle" class="number" style="fill:${totalVotes?COLORS[peakIndex]:'#f5f5f5'}">${center}</text>
  <text x="150" y="126" text-anchor="middle" class="glabel" style="font-size:11px;letter-spacing:.02em;font-weight:500;fill:#c4c4c4">${voteText}</text>
  </svg></div>
  <div class="legend">${LEVELS.map((l,i)=>`<div class="legendline"><i class="dot" style="background:${COLORS[i]}"></i><span>${l}</span><b>${labels[i]}</b></div>`).join('')}</div></div>`;
