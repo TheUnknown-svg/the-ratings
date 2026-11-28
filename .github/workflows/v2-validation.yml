@@ -1,0 +1,94 @@
+name: V2 validation
+
+on:
+  push:
+    branches:
+      - v2-hardening
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check frontend JavaScript syntax
+        run: node --check app.js
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Check Supabase Edge Function
+        run: deno check supabase/functions/unknown-ratings-api/index.ts
+
+      - name: Smoke-test public API and reject unauthenticated admin actions
+        env:
+          SUPABASE_URL: https://vvgvjfghtkhnqvbhjqcb.supabase.co
+          SUPABASE_ANON_KEY: sb_publishable_T_WBo0M8GVAE3Eo-bY6QQA_E1YX20vm
+        shell: bash
+        run: |
+          set -euo pipefail
+          endpoint="$SUPABASE_URL/functions/v1/unknown-ratings-api"
+          test -n "$SUPABASE_ANON_KEY"
+
+          curl --fail --silent --show-error "$endpoint" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -o /tmp/health.json
+          node -e "const x=require('/tmp/health.json'); if(!x.success || x.status !== 'Backend connected') process.exit(1)"
+
+          check_unauthorized() {
+            local payload="$1"
+            local status
+            status="$(curl --silent --show-error --output /tmp/admin-response.json \
+              --write-out '%{http_code}' -X POST "$endpoint" \
+              -H "apikey: $SUPABASE_ANON_KEY" \
+              -H "Content-Type: application/json" \
+              --data "$payload")"
+            if [ "$status" != "401" ]; then
+              cat /tmp/admin-response.json
+              echo "Expected 401 for unauthenticated admin action; got $status"
+              exit 1
+            fi
+          }
+
+          check_unauthorized '{"action":"admin-check"}'
+          check_unauthorized '{"action":"admin-save-schedule"}'
+          check_unauthorized '{"action":"admin-save-event"}'
+          check_unauthorized '{"action":"admin-delete-event"}'
+
+          date_status="$(curl --silent --show-error --output /tmp/date-response.json \
+            --write-out '%{http_code}' -X POST "$endpoint" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            --data '{"action":"submit-rating","visitor_token":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","rating_date":"not-a-date","meal":"breakfast","category":"all","taste_rating":3,"review":""}')"
+          if [ "$date_status" != "400" ]; then
+            cat /tmp/date-response.json
+            echo "Expected 400 for an invalid date; got $date_status"
+            exit 1
+          fi
+
+          # A historical date must pass date-range validation; invalid meal then returns 400, not the old 403 week block.
+          for selected_date in "2000-01-01" "2099-01-01"; do
+            selected_status="$(curl --silent --show-error --output /tmp/selected-date-response.json \
+              --write-out '%{http_code}' -X POST "$endpoint" \
+              -H "apikey: $SUPABASE_ANON_KEY" \
+              -H "Content-Type: application/json" \
+              --data "{\"action\":\"submit-rating\",\"visitor_token\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"rating_date\":\"$selected_date\",\"meal\":\"invalid\",\"category\":\"all\",\"taste_rating\":3,\"review\":\"\"}")"
+            if [ "$selected_status" != "400" ]; then
+              cat /tmp/selected-date-response.json
+              echo "Selected date $selected_date was blocked before normal field validation; got $selected_status"
+              exit 1
+            fi
+          done
+
+          cors_status="$(curl --silent --show-error --output /tmp/cors-response.json \
+            --write-out '%{http_code}' "$endpoint" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Origin: https://untrusted.example")"
+          test "$cors_status" = "403"

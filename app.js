@@ -1,88 +1,311 @@
 const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const MEALS=['breakfast','lunch','dinner'];
 const LEVELS=['Very Bad','Bad','Good','Very Good'];
 const COLORS=['#F45F82','#FFBE00','#00C995','#B83FF2'];
-const BASE={breakfast:{start:'07:00',end:'10:00',veg:true,nonveg:false},lunch:{start:'12:00',end:'15:00',veg:true,nonveg:false},dinner:{start:'18:00',end:'21:00',veg:true,nonveg:true}};
-const clone=(v)=>JSON.parse(JSON.stringify(v));
-const read=(k,d)=>{try{const raw=localStorage.getItem(k);return raw===null?clone(d):JSON.parse(raw)}catch{return clone(d)}};
-const escapeHTML=(value)=>String(value??'').replace(/[&<>\"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch]));
-function normalizeConfig(raw){
- const out={schedule:clone(BASE),events:[]};
- if(raw&&typeof raw==='object'){
-  for(const m of Object.keys(BASE)){
-   const item=raw.schedule?.[m];
-   if(item&&typeof item==='object') out.schedule[m]={start:/^\d{2}:\d{2}$/.test(item.start)?item.start:BASE[m].start,end:/^\d{2}:\d{2}$/.test(item.end)?item.end:BASE[m].end,veg:!!item.veg,nonveg:!!item.nonveg};
-  }
-  if(Array.isArray(raw.events)) out.events=raw.events.filter(e=>e&&typeof e==='object'&&Number.isInteger(e.day)&&e.day>=0&&e.day<=6&&['breakfast','lunch','dinner'].includes(e.meal)&&['veg','nonveg'].includes(e.cat)&&typeof e.id==='string').map(e=>({...e,active:e.active!==false}));
- }
- return out;
-}
-let cfg=normalizeConfig(read('tu_v23_cfg',{schedule:BASE,events:[]}));
-let st={page:'home',day:new Date().getDay(),meal:'',cat:'',session:''};
+const API_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/functions/v1/unknown-ratings-api';
+const AUTH_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/auth/v1';
+const API_KEY='sb_publishable_T_WBo0M8GVAE3Eo-bY6QQA_E1YX20vm';
 const app=document.getElementById('app');
-function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){console.error('Local storage write failed',e);return false}}
-function dayKey(d){return 'day_'+d}
-function baseId(d,m,c){return `${dayKey(d)}_${m}_${c||'veg'}`}
-function events(d,m){return cfg.events.filter(e=>e.day===d&&e.meal===m&&e.active)}
-function categories(m,d){let normal=['veg','nonveg'].filter(c=>cfg.schedule[m][c]);let special=events(d,m).map(e=>e.cat);return [...new Set([...normal,...special])]}
-function sessionId(d,m,c){let ev=events(d,m).find(e=>e.cat===c);return ev?ev.id:baseId(d,m,c)}
-function getVotes(id){const v=read('tu_v23_votes_'+id,[]);return Array.isArray(v)?v.filter(x=>x&&typeof x==='object'):[]}
-function addVotes(id,v){save('tu_v23_votes_'+id,v)}
-function theme(){document.body.className=st.page==='rate'?'cosmic':st.page==='overall'?'aurora':''}
-let appHistoryDepth=0;
-function snapshot(){return {__unknownRatings:true,page:st.page,day:st.day,meal:st.meal,cat:st.cat,session:st.session,idx:appHistoryDepth}}
-function go(p){
- st.page=p;appHistoryDepth++;
- try{history.pushState(snapshot(),'','#'+p)}catch(e){appHistoryDepth=Math.max(0,appHistoryDepth-1)}
- render();
+let schedules=[],events=[],pageVersion=0,poll=null,adminSession=null,connectionIssue='';
+const summaryCache=new Map(),summaryRequests=new Map();
+const PUBLIC_CACHE_KEY='tu_v2_public_cache';
+function restorePublicCache(){try{const x=JSON.parse(safeRead(PUBLIC_CACHE_KEY)||'null');if(x&&Date.now()-x.savedAt<86400000){schedules=x.schedules||[];events=x.events||[]}}catch{}}
+function savePublicCache(){safeWrite(PUBLIC_CACHE_KEY,JSON.stringify({savedAt:Date.now(),schedules,events}))}
+const ADMIN_HASH='#manage-7f3a9c2e';
+let state={page:'home',day:currentBishkek().weekday,weekOffset:0,meal:'',category:'',session:null};
+function currentBishkek(){
+ const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Bishkek',year:'numeric',month:'2-digit',day:'2-digit',weekday:'short'}).formatToParts(new Date());
+ const v={};for(const p of parts)if(p.type!=='literal')v[p.type]=p.value;
+ const date=v.year+'-'+v.month+'-'+v.day;
+ const weekday=new Date(date+'T12:00:00Z').getUTCDay();
+ return {date,weekday};
 }
-function home(){
- st.meal='';st.cat='';st.session='';
- go('home');
+function dateFor(day,offset=state.weekOffset||0){
+ const now=currentBishkek(),d=new Date(now.date+'T12:00:00Z');
+ d.setUTCDate(d.getUTCDate()-now.weekday+day+(offset*7));
+ return d.toISOString().slice(0,10);
 }
-function appBack(fallback){
- if(appHistoryDepth>0){history.back();return}
- if(fallback){st.page=fallback;render();return}
- st.page='home';st.meal='';st.cat='';st.session='';render();
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function safeRead(k){try{return localStorage.getItem(k)}catch{return null}}
+function safeWrite(k,v){try{localStorage.setItem(k,v);return true}catch{return false}}
+function visitorToken(){
+ let v=safeRead('tu_v2_visitor_token');
+ if(!v||v.length<32){v=(crypto.randomUUID?.().replace(/-/g,'')||String(Math.random()).slice(2).repeat(4))+(crypto.randomUUID?.().replace(/-/g,'')||String(Math.random()).slice(2).repeat(4));safeWrite('tu_v2_visitor_token',v)}
+ return v;
 }
+function adminStore(){try{const raw=sessionStorage.getItem('tu_v2_admin_session');return raw?JSON.parse(raw):null}catch{return null}}
+function setAdminStore(v){adminSession=v;try{if(v)sessionStorage.setItem('tu_v2_admin_session',JSON.stringify(v));else sessionStorage.removeItem('tu_v2_admin_session')}catch{}}
+adminSession=adminStore();
+async function api(action,data={},token=null){
+ const bearer=token||API_KEY,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
+ try{
+  const res=await fetch(API_URL,{method:'POST',cache:'no-store',credentials:'omit',signal:controller.signal,headers:{'Content-Type':'application/json','apikey':API_KEY,'Authorization':'Bearer '+bearer},body:JSON.stringify({action,...data})});
+  let json={};try{json=await res.json()}catch{}
+  if(!res.ok||json.success===false)throw new Error(json.error||'Request failed ('+res.status+')');
+  return json;
+ }catch(error){
+  if(error.name==='AbortError')throw new Error('The ratings server took too long to respond. Please retry.');
+  throw error;
+ }finally{clearTimeout(timer)}
+}
+async function loadPublic(){
+ connectionIssue='';
+ const results=await Promise.allSettled([api('weekly-schedule'),api('active-events')]);
+ if(results[0].status==='fulfilled')schedules=results[0].value.schedule||[];
+ if(results[1].status==='fulfilled')events=results[1].value.events||[];
+ savePublicCache();
+ const failures=results.filter(x=>x.status==='rejected');
+ if(failures.length)connectionIssue=failures.length===2?'Live data is temporarily unavailable. Please retry.':'Some live data could not be loaded. Please retry to refresh it.';
+}
+function schedule(day,meal){return schedules.find(x=>Number(x.weekday)===day&&x.meal===meal)||null}
+function eventsFor(day,meal){const date=dateFor(day);return events.filter(e=>e.event_date===date&&e.meal===meal)}
+function categoryOptions(day,meal){
+ if(meal==='breakfast'||meal==='lunch')return ['all',...eventsFor(day,meal).map(e=>e.category)].filter((x,i,a)=>a.indexOf(x)===i);
+ const s=schedule(day,meal),base=[];
+ if(s?.veg_enabled)base.push('veg');
+ if(s?.nonveg_enabled)base.push('nonveg');
+ return [...new Set([...base,...eventsFor(day,meal).map(e=>e.category)])];
+}
+function sessionFor(day,meal,category){
+ const event=eventsFor(day,meal).find(e=>e.category===category);
+ return {rating_date:dateFor(day),meal,category,event_id:event?.id||null,event_name:event?.event_name||''};
+}
+function sessionKey(s){return s.event_id?'event_'+s.event_id:[s.rating_date,s.meal,s.category].join('_')}
+function editRecord(s){try{return JSON.parse(safeRead('tu_v2_edit_'+sessionKey(s))||'null')}catch{return null}}
+function saveEditRecord(s,r){safeWrite('tu_v2_edit_'+sessionKey(s),JSON.stringify(r))}
+function counts(summary){return [summary?.very_bad,summary?.bad,summary?.good,summary?.very_good].map(n=>Math.max(0,Math.floor(Number(n)||0)))}
+function total(c){return c.reduce((a,b)=>a+b,0)}
+function dataFromCounts(c){return {counts:c,total:total(c)}}
+function sumSummaries(arr){const c=[0,0,0,0];arr.forEach(s=>counts(s).forEach((n,i)=>c[i]+=n));return dataFromCounts(c)}
+async function getSummary(s,force=false){
+ const key=sessionKey(s),cached=summaryCache.get(key);
+ if(!cached){try{const disk=JSON.parse(safeRead('tu_v2_summary_'+key)||'null');if(disk?.value)summaryCache.set(key,disk)}catch{}}
+ const current=summaryCache.get(key);
+ if(summaryRequests.has(key))return summaryRequests.get(key);
+ if(!force&&current&&Date.now()-current.at<8000)return current.value;
+ const payload=s.event_id?{event_id:s.event_id}:{rating_date:s.rating_date,meal:s.meal,category:s.category};
+ const request=api('rating-summary',payload).then(r=>{
+  const value=r.summary||{total_ratings:0,very_bad:0,bad:0,good:0,very_good:0};
+  const entry={at:Date.now(),value};summaryCache.set(key,entry);safeWrite('tu_v2_summary_'+key,JSON.stringify(entry));return value;
+ }).finally(()=>{if(summaryRequests.get(key)===request)summaryRequests.delete(key)});
+ summaryRequests.set(key,request);return request;
+}
+function paintMeter(panel,summary){
+ if(!panel?.isConnected)return;
+ const holder=document.createElement('div');
+ holder.innerHTML=meter({counts:counts(summary)},'Taste');
+ const fresh=holder.querySelector('svg.gauge'),current=panel.querySelector('svg.gauge');
+ if(fresh&&current){
+  const nextPaths=fresh.querySelectorAll('.meter-segment'),oldPaths=current.querySelectorAll('.meter-segment');
+  nextPaths.forEach((next,i)=>{
+   const old=oldPaths[i];if(!old)return;
+   ['stroke-dasharray','stroke-dashoffset','opacity','stroke-linecap'].forEach(attr=>old.setAttribute(attr,next.getAttribute(attr)||''));
+   old.setAttribute('data-count',next.getAttribute('data-count')||'0');
+  });
+  current.setAttribute('aria-label',fresh.getAttribute('aria-label')||'');
+  const nextTexts=fresh.querySelectorAll('text'),oldTexts=current.querySelectorAll('text');
+  nextTexts.forEach((node,i)=>{if(oldTexts[i]){oldTexts[i].textContent=node.textContent;oldTexts[i].setAttribute('style',node.getAttribute('style')||'')}});
+  const nextLegend=holder.querySelectorAll('.legendline b'),oldLegend=panel.querySelectorAll('.legendline b');
+  nextLegend.forEach((node,i)=>{if(oldLegend[i])oldLegend[i].textContent=node.textContent});
+ }else{panel.innerHTML=holder.innerHTML}
+}
+
+function setTheme(){document.body.className=state.page==='rate'?'cosmic':state.page==='overall'?'aurora':''}
+let historyDepth=0;
+function snap(){return {tuRatings:true,page:state.page,day:state.day,weekOffset:state.weekOffset||0,meal:state.meal,category:state.category,depth:historyDepth}}
+function go(p){state.page=p;historyDepth++;try{history.pushState(snap(),'',p==='admin'?ADMIN_HASH:'#'+p)}catch{historyDepth=Math.max(0,historyDepth-1)}render()}
+function back(fallback){if(historyDepth>0){history.back();return}state.page=fallback||'home';render()}
 window.addEventListener('popstate',e=>{
- if(e.state&&e.state.__unknownRatings){
-  st.page=e.state.page||'home';
-  st.day=Number.isInteger(e.state.day)?e.state.day:st.day;
-  st.meal=e.state.meal||'';
-  st.cat=e.state.cat||'';
-  st.session=e.state.session||'';
-  appHistoryDepth=Number.isInteger(e.state.idx)?Math.max(0,e.state.idx):0;
- }else{
-  st.page='home';st.meal='';st.cat='';st.session='';appHistoryDepth=0;
- }
+ if(e.state?.tuRatings){state.page=e.state.page||'home';state.day=e.state.day??state.day;state.weekOffset=e.state.weekOffset??0;state.meal=e.state.meal||'';state.category=e.state.category||'';historyDepth=Math.max(0,e.state.depth||0)}
+ else{state.page='home';state.meal='';state.category='';historyDepth=0}
  render();
 });
-function weekday(){return DAYS[st.day]}
-function dayNav(){return `<div class="days">${DAYS.map((d,i)=>`<button class="day ${i===st.day?'active':''}" data-day="${i}">${d}</button>`).join('')}</div>`}
-function bindDays(){app.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{st.day=+b.dataset.day;render()})}
-function getData(votes,key){
- let counts=[0,0,0,0],sum=0;
- votes.forEach(v=>{
-  let n=Number(v[key]);
-  if(Number.isInteger(n)&&n>=1&&n<=4){counts[n-1]++;sum+=n}
+function dayNav(){
+ const start=dateFor(0),end=dateFor(6),fmt=x=>new Date(x+'T12:00:00Z').toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'});
+ return '<div class="week-nav"><button class="week-shift" data-week="-1" aria-label="Previous week">‹</button><strong>'+fmt(start)+' – '+fmt(end)+'</strong><button class="week-shift" data-week="1" aria-label="Next week">›</button><button class="week-today" data-week="today">Today</button></div><div class="days">'+DAYS.map((d,i)=>'<button class="day '+(i===state.day?'active':'')+'" data-day="'+i+'"><span>'+d.slice(0,3)+'</span><small>'+fmt(dateFor(i))+'</small></button>').join('')+'</div>';
+}
+function bindDays(){
+ app.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{state.day=Number(b.dataset.day);render()});
+ app.querySelectorAll('[data-week]').forEach(b=>b.onclick=()=>{if(b.dataset.week==='today'){state.weekOffset=0;state.day=currentBishkek().weekday}else state.weekOffset=(state.weekOffset||0)+Number(b.dataset.week);render()});
+}
+function bindBack(fallback){const b=document.getElementById('back');if(b)b.onclick=()=>back(fallback)}
+function resultCard(title,subtitle,summary){
+ const c=Array.isArray(summary?.counts)?summary.counts:counts(summary);
+ return '<section class="panel"><div class="row"><div><h2>'+esc(title)+'</h2><p>'+esc(subtitle)+'</p></div><span class="pill">'+total(c)+' ratings</span></div>'+meter({counts:c},title)+'</section>';
+}
+function renderHome(){
+ setTheme();
+ app.innerHTML='<section class="hero"><div class="kicker">MESS EXPERIENCE</div><h1>How was the food?</h1><p>Choose a meal to rate it or explore the community\'s ratings.</p></section>'+dayNav()+
+ '<div class="grid"><button class="tile" data-meal="breakfast"><span class="emoji">☀️</span><span><strong>Breakfast</strong><small>Rate & view results</small></span></button><button class="tile" data-meal="lunch"><span class="emoji">🥗</span><span><strong>Lunch</strong><small>Rate & view results</small></span></button><button class="tile" data-meal="dinner"><span class="emoji">🌙</span><span><strong>Dinner</strong><small>Veg / Non-Veg</small></span></button><button class="tile results" id="overall"><span class="emoji">✦</span><span><strong>Overall Ratings</strong><small>Five daily result meters</small></span></button></div>'+(connectionIssue?'<div class="empty connection-warning" role="status">'+esc(connectionIssue)+' <button class="secondary" id="retryPublic">Retry</button></div>':'<div class="notice live-note">Live community ratings</div>');
+ bindDays();
+ app.querySelectorAll('[data-meal]').forEach(b=>b.onclick=()=>{state.meal=b.dataset.meal;const cats=categoryOptions(state.day,state.meal);if(state.meal==='dinner')go('category');else{state.category=cats[0]||'all';go('rate')}});
+ document.getElementById('overall').onclick=()=>go('overall');const retry=document.getElementById('retryPublic');if(retry)retry.onclick=()=>{retry.disabled=true;retry.textContent='Retrying…';loadPublic().then(render).catch(()=>render())};
+}
+function renderCategory(){
+ setTheme();const cats=categoryOptions(state.day,'dinner');
+ app.innerHTML='<button class="back" id="back">← All meals</button><div class="kicker">'+DAYS[state.day]+' · '+dateFor(state.day)+' · DINNER</div><h1>Choose dinner type.</h1><div class="choicegrid">'+(cats.map(c=>'<button class="choice" data-cat="'+esc(c)+'"><span>'+(c==='veg'?'🥬':'🍗')+'</span><h3>'+(c==='veg'?'Veg':'Non-Veg')+'</h3><small>Open rating page</small></button>').join('')||'<div class="empty">No dinner options scheduled for this weekday.</div>')+'</div>';
+ bindBack('home');app.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{state.category=b.dataset.cat;go('rate')});
+}
+async function renderRate(){
+ setTheme();const id=++pageVersion,s=sessionFor(state.day,state.meal,state.category);let saved=editRecord(s);
+ let cachedSummary=summaryCache.get(sessionKey(s));
+  if(!cachedSummary){try{cachedSummary=JSON.parse(safeRead('tu_v2_summary_'+sessionKey(s))||'null');if(cachedSummary?.value)summaryCache.set(sessionKey(s),cachedSummary)}catch{}}
+  let liveCounts=counts(cachedSummary?.value||{});
+ const meterPanel='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:liveCounts},'Taste')+'</section>';
+ const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+dateFor(state.day)+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
+ let savedRecord=saved;
+ const existing=Number(savedRecord?.taste_rating)||0,reviewText=savedRecord?.review||'';
+  const savedNotice=savedRecord?'<section class="panel edit-saved" id="savedNotice"><div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button></section>':'';
+  app.innerHTML=head+meterPanel+savedNotice+'<section class="panel" id="votePanel" '+(savedRecord?'hidden':'')+'><h2>'+(savedRecord?'Edit your rating':'Submit your rating')+'</h2><p>Choose one of the four options.</p><form id="vote"><div class="rating"><b>Taste</b><div class="rating-buttons">'+LEVELS.map((x,i)=>'<button type="button" class="rate '+(existing===i+1?'selected':'')+'" data-v="'+(i+1)+'">'+x+'</button>').join('')+'</div></div><div class="review-box"><h3>Write a Review</h3><textarea id="reviewText" maxlength="500" rows="4" placeholder="Write your review here...">'+esc(reviewText)+'</textarea><div class="review-meta"><span class="notice">Optional · Anonymous</span><span class="notice" id="reviewCount">'+reviewText.length+'/500</span></div></div><div class="row" style="margin-top:15px"><span class="notice">Edit access is private and saved on this device.</span><button type="button" class="primary" id="send" '+(!existing?'disabled':'')+'>'+(savedRecord?'Update my rating':'Post rating')+'</button></div><div id="message" class="notice" role="status" style="margin-top:10px"></div></form></section>';
+  const bindEditToggle=()=>{const toggle=document.getElementById('editToggle');if(toggle)toggle.onclick=()=>{document.getElementById('votePanel').hidden=false;toggle.hidden=true;};};
+  bindEditToggle();
+ bindBack(state.meal==='dinner'?'category':'home');
+ let chosen=existing;const review=document.getElementById('reviewText');
+ review.oninput=()=>document.getElementById('reviewCount').textContent=review.value.length+'/500';
+ app.querySelectorAll('.rate').forEach(b=>b.onclick=()=>{chosen=Number(b.dataset.v);app.querySelectorAll('.rate').forEach(x=>x.classList.toggle('selected',x===b));document.getElementById('send').disabled=false});
+ document.getElementById('vote').onsubmit=e=>e.preventDefault();
+  document.getElementById('send').addEventListener('click',async()=>{if(!chosen)return;
+  const btn=document.getElementById('send'),msg=document.getElementById('message');btn.disabled=true;btn.textContent=savedRecord?'Updating…':'Posting…';
+  const beforeCounts=liveCounts.slice(),previous=Number(savedRecord?.taste_rating)||0;
+  if(previous>0)liveCounts[previous-1]=Math.max(0,liveCounts[previous-1]-1);
+  liveCounts[chosen-1]++;
+  const optimisticSummary={total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]};
+  paintMeter(app.querySelector('#liveMeter'),optimisticSummary);
+  try{
+   const reviewValue=review.value.trim();
+   let nextRecord,serverSummary=null;
+    if(savedRecord?.edit_token){
+     const result=await api('edit-rating',{edit_token:savedRecord.edit_token,taste_rating:chosen,review:reviewValue});
+     serverSummary=result.summary||null;
+     nextRecord={...savedRecord,taste_rating:chosen,review:reviewValue};
+    }else{
+     const result=await api('submit-rating',{visitor_token:visitorToken(),rating_date:s.rating_date,meal:s.meal,category:s.category,taste_rating:chosen,review:reviewValue,event_id:s.event_id||undefined});
+     serverSummary=result.summary||null;
+     nextRecord={edit_token:result.edit_token,taste_rating:chosen,review:reviewValue};
+    }
+    saveEditRecord(s,nextRecord);savedRecord=nextRecord;
+    if(serverSummary)liveCounts=counts(serverSummary);
+    const nextSummary=serverSummary||{total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]};
+    summaryCache.set(sessionKey(s),{at:Date.now(),value:nextSummary});
+    safeWrite('tu_v2_summary_'+sessionKey(s),JSON.stringify({at:Date.now(),value:nextSummary}));
+    paintMeter(app.querySelector('#liveMeter'),nextSummary);
+   msg.textContent='Saved — your rating meter has been updated.';
+   btn.textContent='Update my rating';btn.disabled=false;
+  }catch(err){liveCounts=beforeCounts;paintMeter(app.querySelector('#liveMeter'),{total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]});msg.textContent=err.message||'Unable to submit rating.';btn.disabled=false;btn.textContent=savedRecord?'Update rating':'Post'}
  });
- let total=counts.reduce((a,b)=>a+b,0);
- return {counts,total,avg:total?(sum/total).toFixed(1):'—'};
+ // Show the form immediately; refresh only the meter after the live summary arrives.
+ getSummary(s,false).then(summary=>{
+  if(id!==pageVersion)return;
+  liveCounts=counts(summary);
+  paintMeter(app.querySelector('#liveMeter'),summary);
+ }).catch(()=>{
+  const panel=app.querySelector('#liveMeter');
+  if(panel&&!panel.querySelector('.meter'))panel.innerHTML='<div class="notice">Live ratings could not be loaded. Your rating form is still available.</div>';
+ });
 }
-function derived(votes){
- // Quantity has been removed. Overall experience now reflects Taste ratings only.
- return votes.filter(v=>Number.isInteger(Number(v.taste))&&Number(v.taste)>=1&&Number(v.taste)<=4)
-             .map(v=>({...v,overall:Number(v.taste)}));
+async function renderOverall(){
+ setTheme();const id=++pageVersion;
+ app.innerHTML='<button class="back" id="back">← Home</button><div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Five meters based on actual submitted Taste ratings.</p>'+dayNav()+'<div class="empty">Loading live results…</div>';
+ bindBack('home');bindDays();
+ const date=dateFor(state.day),regular=[
+  {rating_date:date,meal:'breakfast',category:'all',event_id:null},
+  {rating_date:date,meal:'lunch',category:'all',event_id:null},
+  {rating_date:date,meal:'dinner',category:'veg',event_id:null},
+  {rating_date:date,meal:'dinner',category:'nonveg',event_id:null}
+ ];
+ const dayEvents=events.filter(e=>e.event_date===date);
+ let summaries;
+ try{summaries=await Promise.all([...regular.map(getSummary),...dayEvents.map(e=>getSummary({event_id:e.id}))])}
+ catch{summaries=regular.map(()=>({}))}
+ if(id!==pageVersion)return;
+ const norm=summaries.slice(0,4),extra=summaries.slice(4);
+ const breakfast=[norm[0],...dayEvents.map((e,i)=>e.meal==='breakfast'?extra[i]:null).filter(Boolean)];
+ const lunch=[norm[1],...dayEvents.map((e,i)=>e.meal==='lunch'?extra[i]:null).filter(Boolean)];
+ const veg=[norm[2],...dayEvents.map((e,i)=>e.meal==='dinner'&&e.category==='veg'?extra[i]:null).filter(Boolean)];
+ const nonveg=[norm[3],...dayEvents.map((e,i)=>e.meal==='dinner'&&e.category==='nonveg'?extra[i]:null).filter(Boolean)];
+ const all=[...breakfast,...lunch,...veg,...nonveg];
+ app.innerHTML='<button class="back" id="back">← Home</button><div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Five meters based on actual submitted Taste ratings · '+date+'</p>'+dayNav()+
+ resultCard('Overall Experience','All meal sessions · '+DAYS[state.day],sumSummaries(all))+
+ resultCard('Dinner · Veg','Vegetarian dinner · '+DAYS[state.day],sumSummaries(veg))+
+ resultCard('Dinner · Non-Veg','Non-vegetarian dinner · '+DAYS[state.day],sumSummaries(nonveg))+
+ resultCard('Lunch Overall','Lunch · '+DAYS[state.day],sumSummaries(lunch))+
+ resultCard('Breakfast Overall','Breakfast · '+DAYS[state.day],sumSummaries(breakfast));
+ bindBack('home');bindDays();
 }
+async function verifyAdmin(){
+ if(!adminSession?.access_token)return false;
+ try{const r=await api('admin-check',{},adminSession.access_token);return !!r.is_admin}
+ catch{setAdminStore(null);return false}
+}
+function renderAdminLogin(error=''){
+ setTheme();
+ app.innerHTML='<button class="back" id="back">← Home</button><div class="kicker">SECURE ADMINISTRATION</div><h1>Admin sign in.</h1><section class="panel"><p>Use the administrator account created in Supabase Authentication.</p><form id="adminLogin"><label>Email</label><input class="field" id="adminEmail" type="email" autocomplete="username" required><label style="display:block;margin-top:12px">Password</label><input class="field" id="adminPassword" type="password" autocomplete="current-password" required><button class="primary" id="loginButton" style="margin-top:15px">Sign in</button><p id="loginError" class="notice" role="alert" style="margin-top:12px">'+esc(error)+'</p></form></section>';
+ bindBack('home');
+ document.getElementById('adminLogin').onsubmit=async e=>{
+  e.preventDefault();const btn=document.getElementById('loginButton'),errorNode=document.getElementById('loginError');btn.disabled=true;btn.textContent='Signing in…';
+  try{
+   const res=await fetch(AUTH_URL+'/token?grant_type=password',{method:'POST',headers:{'Content-Type':'application/json','apikey':API_KEY},body:JSON.stringify({email:document.getElementById('adminEmail').value.trim(),password:document.getElementById('adminPassword').value})});
+   const session=await res.json();if(!res.ok)throw new Error(session.msg||session.message||'Sign in failed');
+   setAdminStore(session);if(!await verifyAdmin())throw new Error('This account is not on the administrator allow-list.');
+   await renderAdmin();
+  }catch(error){setAdminStore(null);errorNode.textContent=error.message||'Unable to sign in';btn.disabled=false;btn.textContent='Sign in'}
+ };
+}
+function timeValue(v){return String(v||'').slice(0,5)}
+async function renderAdmin(){
+ setTheme();const ok=await verifyAdmin();if(!ok){renderAdminLogin();return}
+ const id=++pageVersion;
+ app.innerHTML='<div class="kicker">SECURE ADMINISTRATION</div><h1>Admin studio</h1><div class="empty">Loading settings…</div>';
+ let s,e;try{[s,e]=await Promise.all([api('weekly-schedule',{},adminSession.access_token),api('active-events',{},adminSession.access_token)])}
+ catch(err){app.innerHTML='<div class="empty">'+esc(err.message)+'</div><button class="secondary" id="adminRetry">Retry</button>';document.getElementById('adminRetry').onclick=renderAdmin;return}
+ if(id!==pageVersion)return;schedules=s.schedule||[];events=e.events||[];
+ const scheduleFields=DAYS.map((day,d)=>'<section class="panel"><h2>'+day+'</h2><div class="admin-grid">'+MEALS.map(m=>{
+  const item=schedules.find(x=>Number(x.weekday)===d&&x.meal===m)||{opens_at:'07:00:00',closes_at:'10:00:00',veg_enabled:true,nonveg_enabled:false};
+  return '<div class="adminbox" data-schedule="'+d+'-'+m+'"><h3>'+m[0].toUpperCase()+m.slice(1)+'</h3><label>Opens</label><input class="field" type="time" id="open-'+d+'-'+m+'" value="'+timeValue(item.opens_at)+'"><label>Closes</label><input class="field" type="time" id="close-'+d+'-'+m+'" value="'+timeValue(item.closes_at)+'"><label><input type="checkbox" id="veg-'+d+'-'+m+'" '+(item.veg_enabled?'checked':'')+'> Veg enabled</label><label><input type="checkbox" id="nonveg-'+d+'-'+m+'" '+(item.nonveg_enabled?'checked':'')+'> Non-Veg enabled</label></div>'
+ }).join('')+'</div></section>').join('');
+ app.innerHTML='<div class="row"><div><div class="kicker">SECURE ADMINISTRATION</div><h1>Admin studio</h1></div><button class="secondary" id="logout">Sign out</button></div>'+
+ '<section class="panel"><h2>Weekly meal schedule</h2><p>Changes are saved to Supabase and apply to the live site. Ratings stay open 24/7; opening and closing times are informational only.</p><form id="scheduleForm">'+scheduleFields+'<button class="primary" id="saveSchedule">Save all 21 schedule entries</button><span class="notice" id="scheduleMsg" role="status"></span></form></section>'+
+ '<section class="panel"><h2>Temporary event session</h2><p>Create a dated one-time meal session. Ratings stay open 24/7 on the event date. Existing ratings remain attached if an event is deactivated.</p><form id="eventForm"><div class="admin-grid"><div class="adminbox"><label>Date</label><input class="field" id="eventDate" type="date" required><label>Meal</label><select class="field" id="eventMeal"><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option></select><label>Category</label><select class="field" id="eventCategory"><option value="all">All</option><option value="veg">Veg</option><option value="nonveg">Non-Veg</option></select></div><div class="adminbox"><label>Event name</label><input class="field" id="eventName" maxlength="150" placeholder="Special event"><label>Opens</label><input class="field" id="eventOpen" type="time" value="12:00" required><label>Closes</label><input class="field" id="eventClose" type="time" value="15:00" required></div></div><button class="primary" id="saveEvent" style="margin-top:14px">Create event</button><span class="notice" id="eventMsg" role="status"></span></form><div id="eventsList" style="margin-top:16px">'+(events.map(ev=>'<div class="row" style="padding:10px 0;border-bottom:1px solid var(--line)"><span>'+esc(ev.event_name||ev.meal)+' · '+esc(ev.event_date)+' · '+esc(ev.category)+' · '+esc(timeValue(ev.opens_at))+'–'+esc(timeValue(ev.closes_at))+'</span><button class="secondary" data-event-delete="'+esc(ev.id)+'">Deactivate</button></div>').join('')||'<div class="empty">No active temporary events.</div>')+'</div></section>'+
+ '<p class="notice">Administrator access is verified by Supabase Auth and the server-side admin_users allow-list. Never share your admin password or edit token.</p>';
+ document.getElementById('logout').onclick=()=>{setAdminStore(null);renderAdminLogin()};
+ document.getElementById('scheduleForm').onsubmit=async ev=>{
+  ev.preventDefault();const btn=document.getElementById('saveSchedule'),msg=document.getElementById('scheduleMsg');btn.disabled=true;msg.textContent='Saving…';
+  const rows=[];for(let d=0;d<7;d++)for(const m of MEALS){const o=document.getElementById('open-'+d+'-'+m).value,c=document.getElementById('close-'+d+'-'+m).value;if(!o||!c||o>=c){msg.textContent='Check opening and closing times for '+DAYS[d]+' '+m+'.';btn.disabled=false;return}rows.push({weekday:d,meal:m,opens_at:o,closes_at:c,veg_enabled:document.getElementById('veg-'+d+'-'+m).checked,nonveg_enabled:document.getElementById('nonveg-'+d+'-'+m).checked})}
+  try{await api('admin-save-schedule',{schedule:rows},adminSession.access_token);msg.textContent='Saved successfully.';await loadPublic()}catch(err){msg.textContent=err.message}finally{btn.disabled=false}
+ };
+ document.getElementById('eventForm').onsubmit=async ev=>{
+  ev.preventDefault();const btn=document.getElementById('saveEvent'),msg=document.getElementById('eventMsg');btn.disabled=true;msg.textContent='Saving…';
+  const meal=document.getElementById('eventMeal').value,category=document.getElementById('eventCategory').value;
+  if((meal==='breakfast'||meal==='lunch')&&category!=='all'){msg.textContent='Breakfast and lunch events must use All.';btn.disabled=false;return}
+  if(meal==='dinner'&&category==='all'){msg.textContent='Dinner events must use Veg or Non-Veg.';btn.disabled=false;return}
+  try{await api('admin-save-event',{event_date:document.getElementById('eventDate').value,meal,category,event_name:document.getElementById('eventName').value,opens_at:document.getElementById('eventOpen').value,closes_at:document.getElementById('eventClose').value},adminSession.access_token);msg.textContent='Event created.';await renderAdmin()}catch(err){msg.textContent=err.message;btn.disabled=false}
+ };
+ app.querySelectorAll('[data-event-delete]').forEach(b=>b.onclick=async()=>{if(!confirm('Deactivate this event? Existing ratings will be preserved.'))return;b.disabled=true;try{await api('admin-delete-event',{id:b.dataset.eventDelete},adminSession.access_token);await renderAdmin()}catch(err){alert(err.message);b.disabled=false}});
+}
+function render(){
+ if(poll){clearInterval(poll);poll=null}
+ if(state.page==='home')renderHome();
+ else if(state.page==='category')renderCategory();
+ else if(state.page==='rate'){renderRate();poll=setInterval(()=>{if(document.visibilityState==='visible'&&state.page==='rate')refreshRateMeter()},20000)}
+ else if(state.page==='overall'){renderOverall()}
+ else if(state.page==='admin')renderAdmin();
+}
+async function refreshRateMeter(){
+  const s=sessionFor(state.day,state.meal,state.category);try{const r=await getSummary(s,true);paintMeter(app.querySelector('#liveMeter'),r)}catch{}
+ }
+if(location.hash===ADMIN_HASH)state.page='admin';
+historyDepth=0;try{history.replaceState(snap(),'',state.page==='admin'?ADMIN_HASH:'#'+state.page)}catch{}
+restorePublicCache();
+render();
+loadPublic().then(()=>{if(state.page==='home'||state.page==='category')render()}).catch(()=>{});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&state.page==='rate')refreshRateMeter()});
+
 function getPercentLabels(counts){
  const total=counts.reduce((a,b)=>a+b,0);
  if(!total)return counts.map(()=> '0%');
- // Round each category independently, matching the reference image. The
- // displayed values may add to 99% or 101% because each is rounded separately.
  return counts.map(n=>{
   if(!n)return '0%';
-  const pct=n*100/total;
-  const rounded=Math.round(pct);
+  const rounded=Math.round(n*100/total);
   return rounded===0?'<1%':rounded+'%';
  });
 }
@@ -103,29 +326,25 @@ function meter(data,title){
  // remaining arc after fixed black separators are reserved. Butt caps keep
  // the separators open instead of allowing rounded ends to collide.
  const cx=150,cy=130,r=105,stroke=20;
- const active=counts.map((n,i)=>({n,i,pct:total?n/total*100:0})).filter(x=>x.n>0);
- const gap=active.length>1?2.8:0;
- const usable=Math.max(0,180-gap*(active.length-1));
+ const gap=counts.filter(n=>n>0).length>1?2.8:0;
+ const usable=Math.max(0,180-gap*(counts.filter(n=>n>0).length-1));
  const point=(deg)=>{
   const rad=deg*Math.PI/180;
   return [cx+r*Math.cos(rad),cy-r*Math.sin(rad)];
  };
  const arcPath=(from,to)=>{
   const [sx,sy]=point(from),[ex,ey]=point(to);
-  const sweep=from-to;
-  const large=sweep>180?1:0;
-  // sweep-flag 1 draws the upper half in SVG screen coordinates (left to right).
+  const sweep=from-to,large=sweep>180?1:0;
   return `M ${sx.toFixed(3)} ${sy.toFixed(3)} A ${r} ${r} 0 ${large} 1 ${ex.toFixed(3)} ${ey.toFixed(3)}`;
  };
- const track=arcPath(180,0);
- let cursor=180;
- const segments=active.map(({n,i,pct})=>{
-  const sweep=usable*n/total;
-  const from=cursor,to=cursor-sweep;
-  cursor=to-gap;
-  // Never discard a non-zero category: tiny percentages remain visible. Larger arcs use rounded ends; tiny slices use butt caps to avoid turning into oversized dots.
+ const track=arcPath(180,0),circumference=Math.PI*r;
+ let cursor=0;
+ const segments=counts.map((n,i)=>{
+  const pct=total?n/total*100:0,sweep=n?usable*n/total:0;
+  const segmentLength=sweep*circumference/180,offset=cursor*circumference/180;
+  if(n)cursor+=sweep+gap;
   const cap=pct>=2?'round':'butt';
-  return `<path class="meter-segment" data-index="${i}" data-count="${n}" d="${arcPath(from,to)}" fill="none" stroke="${COLORS[i]}" stroke-width="${stroke}" stroke-linecap="${cap}" stroke-linejoin="round"/>`;
+  return `<path class="meter-segment" data-index="${i}" data-count="${n}" d="${track}" fill="none" stroke="${COLORS[i]}" stroke-width="${stroke}" stroke-linecap="${cap}" stroke-linejoin="round" stroke-dasharray="${segmentLength.toFixed(3)} ${(circumference-segmentLength).toFixed(3)}" stroke-dashoffset="-${offset.toFixed(3)}" opacity="${n?1:0}"/>`;
  }).join('');
  const center=total?`${peakPct}%`:'—';
  const voteText=`${total} ${total===1?'vote':'votes'}`;
@@ -139,21 +358,3 @@ function meter(data,title){
  </svg></div>
  <div class="legend">${LEVELS.map((l,i)=>`<div class="legendline"><i class="dot" style="background:${COLORS[i]}"></i><span>${l}</span><b>${labels[i]}</b></div>`).join('')}</div></div>`;
 }
-function resultCard(title,subtitle,votes){let d=derived(votes);return `<section class="panel"><div class="row"><div><h2>${title}</h2><p>${subtitle}</p></div><span class="pill">${votes.length} ratings</span></div>${meter(getData(d,'overall'),title)}</section>`}
-function renderHome(){theme();app.innerHTML=`<section class="hero"><div class="kicker">MESS EXPERIENCE</div><h1>How was the food?</h1><p>Choose a meal to rate it or explore the community's ratings.</p></section>${dayNav()}<div class="grid"><button class="tile" data-meal="breakfast"><span class="emoji">☀️</span><span><strong>Breakfast</strong><small>Rate & view results</small></span></button><button class="tile" data-meal="lunch"><span class="emoji">🥗</span><span><strong>Lunch</strong><small>Rate & view results</small></span></button><button class="tile" data-meal="dinner"><span class="emoji">🌙</span><span><strong>Dinner</strong><small>Veg / Non-Veg</small></span></button><button class="tile results" id="overall"><span class="emoji">✦</span><span><strong>Overall Ratings</strong><small>Five daily result meters</small></span></button></div>`;
- bindDays();app.querySelectorAll('[data-meal]').forEach(b=>b.onclick=()=>{st.meal=b.dataset.meal;let cats=categories(st.meal,st.day);if(st.meal!=='dinner'){st.cat=cats[0]||'veg';st.session=sessionId(st.day,st.meal,st.cat);go('rate')}else go('category')});document.getElementById('overall').onclick=()=>go('overall')}
-function renderCategory(){theme();let cats=categories('dinner',st.day);app.innerHTML=`<button class="back" id="back">← All meals</button><div class="kicker">${weekday()} · DINNER</div><h1>Choose dinner type.</h1><div class="choicegrid">${cats.map(c=>`<button class="choice" data-cat="${c}"><span>${c==='veg'?'🥬':'🍗'}</span><h3>${c==='veg'?'Veg':'Non-Veg'}</h3><small>Open rating page</small></button>`).join('')||'<div class="empty">No dinner options scheduled for this weekday.</div>'}</div>`;document.getElementById('back').onclick=()=>appBack('home');app.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{st.cat=b.dataset.cat;st.session=sessionId(st.day,'dinner',st.cat);go('rate')})}
-function renderRate(){theme();let votes=getVotes(st.session);let cats=st.meal==='dinner'?st.cat.toUpperCase():'';app.innerHTML=`<button class="back" id="back">← ${st.meal==='dinner'?'Dinner options':'All meals'}</button><div class="kicker">${weekday()} · ${st.meal.toUpperCase()} ${cats}</div><h1>Rate your meal.</h1><p>Current results update after each submitted rating.</p><section class="panel"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>${meter(getData(votes,'taste'),'Taste')}</section><section class="panel"><h2>Submit your rating</h2><p>Choose one option to rate the taste.</p><form id="vote"><div class="rating"><b>Taste</b><div class="rating-buttons">${LEVELS.map((x,i)=>`<button type="button" class="rate" data-k="taste" data-v="${i+1}">${x}</button>`).join('')}</div></div><div class="review-box"><h3>Write a Review</h3><textarea id="reviewText" maxlength="1000" rows="4" placeholder="Write your review here..."></textarea><div class="review-meta"><span class="notice">Optional · Anonymous</span><span class="notice" id="reviewCount">0/1000</span></div></div><div class="row" style="margin-top:15px"><span class="notice">Anonymous demo · no account</span><button class="primary" id="send" disabled>Post</button></div></form></section>`;
- document.getElementById('back').onclick=()=>appBack(st.meal==='dinner'?'category':'home');let chosen={};const review=document.getElementById('reviewText');review.oninput=()=>{document.getElementById('reviewCount').textContent=review.value.length+'/1000'};app.querySelectorAll('.rate').forEach(b=>b.onclick=()=>{chosen[b.dataset.k]=+b.dataset.v;app.querySelectorAll(`[data-k="${b.dataset.k}"]`).forEach(x=>x.classList.toggle('selected',x===b));document.getElementById('send').disabled=!chosen.taste||alreadyVoted()});const voteKey='tu_v23_voted_'+st.session;
- const alreadyVoted=()=>{try{return localStorage.getItem(voteKey)==='1'}catch{return false}};
- if(alreadyVoted()){document.getElementById('send').disabled=true;document.getElementById('send').textContent='Already rated';app.querySelector('#vote .notice').textContent='A rating has already been submitted from this browser for this session.'}
- document.getElementById('vote').onsubmit=e=>{e.preventDefault();if(!chosen.taste||alreadyVoted())return;let v=getVotes(st.session);v.push({taste:chosen.taste,review:document.getElementById('reviewText').value.trim().slice(0,1000),at:Date.now()});if(!save('tu_v23_votes_'+st.session,v)){alert('Could not save this rating on this device.');return}try{localStorage.setItem(voteKey,'1')}catch{}renderRate();app.insertAdjacentHTML('afterbegin','<div class="pill" style="display:inline-block;margin-bottom:10px">Rating saved on this device.</div>')}}
-function collect(d,m,c){return getVotes(sessionId(d,m,c))}
-function renderOverall(){theme();let breakfast=collect(st.day,'breakfast','veg'),lunch=collect(st.day,'lunch','veg'),veg=collect(st.day,'dinner','veg'),nonveg=collect(st.day,'dinner','nonveg'),all=[...breakfast,...lunch,...veg,...nonveg];app.innerHTML=`<button class="back" id="back">← Home</button><div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Five separate meters for the selected weekday. Overall experience is calculated from Taste ratings.</p>${dayNav()}${resultCard('Overall Experience','All meal submissions · '+weekday(),all)}${resultCard('Dinner · Veg','Vegetarian dinner · '+weekday(),veg)}${resultCard('Dinner · Non-Veg','Non-vegetarian dinner · '+weekday(),nonveg)}${resultCard('Lunch Overall','Lunch · '+weekday(),lunch)}${resultCard('Breakfast Overall','Breakfast · '+weekday(),breakfast)}`;document.getElementById('back').onclick=()=>appBack('home');bindDays()}
-function renderAdmin(){theme();app.innerHTML=`<button class="back" id="back">← Home</button><div class="kicker">LOCAL DEMO ADMIN</div><h1>Admin studio</h1><p>Configure recurring meal options and one-off event sessions.</p><section class="panel"><h2>Weekly meal schedule</h2><div class="admin-grid">${['breakfast','lunch','dinner'].map(m=>`<div class="adminbox"><h3>${m[0].toUpperCase()+m.slice(1)}</h3><label>Opens</label><input class="field" type="time" id="${m}Start" value="${cfg.schedule[m].start}"><label>Closes</label><input class="field" type="time" id="${m}End" value="${cfg.schedule[m].end}"><label><input type="checkbox" id="${m}veg" ${cfg.schedule[m].veg?'checked':''}> Veg available</label><label><input type="checkbox" id="${m}nonveg" ${cfg.schedule[m].nonveg?'checked':''}> Non-Veg available</label></div>`).join('')}</div><button class="primary" id="saveSchedule" style="margin-top:14px">Save schedule</button></section><section class="panel"><h2>Temporary event session</h2><p>For a special event or a one-time meal change. This session overrides the matching meal/category for the selected weekday in this demo.</p><div class="admin-grid"><div class="adminbox"><label>Weekday</label><select class="field" id="evDay">${DAYS.map((d,i)=>`<option value="${i}">${d}</option>`).join('')}</select><label>Meal</label><select class="field" id="evMeal"><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option></select><label>Category</label><select class="field" id="evCat"><option value="veg">Veg</option><option value="nonveg">Non-Veg</option></select></div><div class="adminbox"><label>Opening time</label><input class="field" type="time" id="evStart" value="12:00"><label>Closing time</label><input class="field" type="time" id="evEnd" value="15:00"><label>Event name</label><input class="field" id="evName" placeholder="Special event meal"></div></div><button class="primary" id="createEvent" style="margin-top:14px">Create temporary session</button><div id="eventList" style="margin-top:14px">${cfg.events.map((e,i)=>`<div class="row" style="padding:9px 0;border-bottom:1px solid var(--line)"><span>${escapeHTML(e.name||e.meal+' '+e.cat)} · ${DAYS[e.day]} · ${escapeHTML(e.start)}–${escapeHTML(e.end)}</span><button class="secondary" data-del="${i}">Remove</button></div>`).join('')||'<div class="empty">No temporary sessions.</div>'}</div></section><p class="notice">Prototype only: admin is not securely authenticated and data is stored in this browser. Live admin permissions and timed expiry need the backend.</p>`;
- document.getElementById('back').onclick=()=>appBack('home');document.getElementById('saveSchedule').onclick=()=>{['breakfast','lunch','dinner'].forEach(m=>cfg.schedule[m]={start:document.getElementById(m+'Start').value,end:document.getElementById(m+'End').value,veg:document.getElementById(m+'veg').checked,nonveg:document.getElementById(m+'nonveg').checked});save('tu_v23_cfg',cfg);alert('Schedule saved on this device.')};document.getElementById('createEvent').onclick=()=>{let day=+document.getElementById('evDay').value,meal=document.getElementById('evMeal').value,cat=document.getElementById('evCat').value,start=document.getElementById('evStart').value,end=document.getElementById('evEnd').value;if(!start||!end||end<=start)return alert('Please choose valid opening and closing times.');cfg.events.push({id:'event_'+Date.now(),day,meal,cat,start,end,name:document.getElementById('evName').value,active:true});save('tu_v23_cfg',cfg);renderAdmin();alert('Temporary session created.')};app.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{cfg.events.splice(+b.dataset.del,1);save('tu_v23_cfg',cfg);renderAdmin()})}
-function render(){if(st.page==='home')renderHome();else if(st.page==='category')renderCategory();else if(st.page==='rate')renderRate();else if(st.page==='overall')renderOverall();else if(st.page==='admin')renderAdmin()}
-if(location.hash==='#admin')st.page='admin';
-appHistoryDepth=0;
-try{history.replaceState(snapshot(),'','#'+st.page)}catch(e){}
-render();
