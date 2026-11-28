@@ -95,9 +95,22 @@ async function getSummary(s,force=false){
 }
 function paintMeter(panel,summary){
  if(!panel?.isConnected)return;
- panel.classList.add('meter-updating');
- panel.innerHTML='<div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:counts(summary)},'Taste');
- requestAnimationFrame(()=>panel.classList.remove('meter-updating'));
+ const holder=document.createElement('div');
+ holder.innerHTML=meter({counts:counts(summary)},'Taste');
+ const fresh=holder.querySelector('svg.gauge'),current=panel.querySelector('svg.gauge');
+ if(fresh&&current){
+  const nextPaths=fresh.querySelectorAll('.meter-segment'),oldPaths=current.querySelectorAll('.meter-segment');
+  nextPaths.forEach((next,i)=>{
+   const old=oldPaths[i];if(!old)return;
+   ['stroke-dasharray','stroke-dashoffset','opacity','stroke-linecap'].forEach(attr=>old.setAttribute(attr,next.getAttribute(attr)||''));
+   old.setAttribute('data-count',next.getAttribute('data-count')||'0');
+  });
+  current.setAttribute('aria-label',fresh.getAttribute('aria-label')||'');
+  const nextTexts=fresh.querySelectorAll('text'),oldTexts=current.querySelectorAll('text');
+  nextTexts.forEach((node,i)=>{if(oldTexts[i]){oldTexts[i].textContent=node.textContent;oldTexts[i].setAttribute('style',node.getAttribute('style')||'')}});
+  const nextLegend=holder.querySelectorAll('.legendline b'),oldLegend=panel.querySelectorAll('.legendline b');
+  nextLegend.forEach((node,i)=>{if(oldLegend[i])oldLegend[i].textContent=node.textContent});
+ }else{panel.innerHTML=holder.innerHTML}
 }
 
 function setTheme(){document.body.className=state.page==='rate'?'cosmic':state.page==='overall'?'aurora':''}
@@ -306,29 +319,25 @@ function meter(data,title){
  // remaining arc after fixed black separators are reserved. Butt caps keep
  // the separators open instead of allowing rounded ends to collide.
  const cx=150,cy=130,r=105,stroke=20;
- const active=counts.map((n,i)=>({n,i,pct:total?n/total*100:0})).filter(x=>x.n>0);
- const gap=active.length>1?2.8:0;
- const usable=Math.max(0,180-gap*(active.length-1));
+ const gap=counts.filter(n=>n>0).length>1?2.8:0;
+ const usable=Math.max(0,180-gap*(counts.filter(n=>n>0).length-1));
  const point=(deg)=>{
   const rad=deg*Math.PI/180;
   return [cx+r*Math.cos(rad),cy-r*Math.sin(rad)];
  };
  const arcPath=(from,to)=>{
   const [sx,sy]=point(from),[ex,ey]=point(to);
-  const sweep=from-to;
-  const large=sweep>180?1:0;
-  // sweep-flag 1 draws the upper half in SVG screen coordinates (left to right).
+  const sweep=from-to,large=sweep>180?1:0;
   return `M ${sx.toFixed(3)} ${sy.toFixed(3)} A ${r} ${r} 0 ${large} 1 ${ex.toFixed(3)} ${ey.toFixed(3)}`;
  };
- const track=arcPath(180,0);
- let cursor=180;
- const segments=active.map(({n,i,pct})=>{
-  const sweep=usable*n/total;
-  const from=cursor,to=cursor-sweep;
-  cursor=to-gap;
-  // Never discard a non-zero category: tiny percentages remain visible. Larger arcs use rounded ends; tiny slices use butt caps to avoid turning into oversized dots.
+ const track=arcPath(180,0),circumference=Math.PI*r;
+ let cursor=0;
+ const segments=counts.map((n,i)=>{
+  const pct=total?n/total*100:0,sweep=n?usable*n/total:0;
+  const segmentLength=sweep*circumference/180,offset=cursor*circumference/180;
+  if(n)cursor+=sweep+gap;
   const cap=pct>=2?'round':'butt';
-  return `<path class="meter-segment" data-index="${i}" data-count="${n}" d="${arcPath(from,to)}" fill="none" stroke="${COLORS[i]}" stroke-width="${stroke}" stroke-linecap="${cap}" stroke-linejoin="round"/>`;
+  return `<path class="meter-segment" data-index="${i}" data-count="${n}" d="${track}" fill="none" stroke="${COLORS[i]}" stroke-width="${stroke}" stroke-linecap="${cap}" stroke-linejoin="round" stroke-dasharray="${segmentLength.toFixed(3)} ${(circumference-segmentLength).toFixed(3)}" stroke-dashoffset="-${offset.toFixed(3)}" opacity="${n?1:0}"/>`;
  }).join('');
  const center=total?`${peakPct}%`:'—';
  const voteText=`${total} ${total===1?'vote':'votes'}`;
