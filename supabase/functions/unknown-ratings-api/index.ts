@@ -132,8 +132,9 @@ async function getRatingSession(body: Record<string, unknown>) {
   const now = bishkekClock();
   const meal = body.meal;
   const category = body.category;
-  if (!["breakfast", "lunch", "dinner"].includes(String(meal)) ||
-      !["all", "veg", "nonveg"].includes(String(category))) {
+  if (typeof meal !== "string" || typeof category !== "string" ||
+      !["breakfast", "lunch", "dinner"].includes(meal) ||
+      !["all", "veg", "nonveg"].includes(category)) {
     return { error: "Invalid meal or category", status: 400 as const };
   }
   if (body.event_id !== undefined && body.event_id !== null) {
