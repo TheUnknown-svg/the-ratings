@@ -120,16 +120,18 @@ async function renderRate(){
  bindBack(state.meal==='dinner'?'category':'home');
  let summary;try{summary=await getSummary(s)}catch{summary={}}
  if(id!==pageVersion)return;
- const meterPanel='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:counts(summary)},'Taste')+'</section>';
+ let liveCounts=counts(summary);
+ const meterPanel='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:liveCounts},'Taste')+'</section>';
  const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
  if(!isToday(state.day)){
   app.innerHTML=head+meterPanel+'<section class="panel"><p>Past and future sessions are view-only. Today\'s meal ratings stay open 24/7.</p></section>';bindBack(state.meal==='dinner'?'category':'home');return;
  }
- const existing=Number(saved?.taste_rating)||0,reviewText=saved?.review||'';
-  const savedNotice=saved?'<section class="panel edit-saved" id="savedNotice"><div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button></section>':'';
-  app.innerHTML=head+meterPanel+savedNotice+'<section class="panel" id="votePanel" '+(saved?'hidden':'')+'><h2>'+(saved?'Edit your rating':'Submit your rating')+'</h2><p>Choose one of the four options.</p><form id="vote"><div class="rating"><b>Taste</b><div class="rating-buttons">'+LEVELS.map((x,i)=>'<button type="button" class="rate '+(existing===i+1?'selected':'')+'" data-v="'+(i+1)+'">'+x+'</button>').join('')+'</div></div><div class="review-box"><h3>Write a Review</h3><textarea id="reviewText" maxlength="500" rows="4" placeholder="Write your review here...">'+esc(reviewText)+'</textarea><div class="review-meta"><span class="notice">Optional · Anonymous</span><span class="notice" id="reviewCount">'+reviewText.length+'/500</span></div></div><div class="row" style="margin-top:15px"><span class="notice">Edit access is private and saved on this device.</span><button class="primary" id="send" '+(!existing?'disabled':'')+'>'+(saved?'Update my rating':'Post rating')+'</button></div><div id="message" class="notice" role="status" style="margin-top:10px"></div></form></section>';
-  const editToggle=document.getElementById('editToggle');
-  if(editToggle)editToggle.onclick=()=>{document.getElementById('votePanel').hidden=false;editToggle.hidden=true;};
+ let savedRecord=saved;
+ const existing=Number(savedRecord?.taste_rating)||0,reviewText=savedRecord?.review||'';
+  const savedNotice=savedRecord?'<section class="panel edit-saved" id="savedNotice"><div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button></section>':'';
+  app.innerHTML=head+meterPanel+savedNotice+'<section class="panel" id="votePanel" '+(savedRecord?'hidden':'')+'><h2>'+(savedRecord?'Edit your rating':'Submit your rating')+'</h2><p>Choose one of the four options.</p><form id="vote"><div class="rating"><b>Taste</b><div class="rating-buttons">'+LEVELS.map((x,i)=>'<button type="button" class="rate '+(existing===i+1?'selected':'')+'" data-v="'+(i+1)+'">'+x+'</button>').join('')+'</div></div><div class="review-box"><h3>Write a Review</h3><textarea id="reviewText" maxlength="500" rows="4" placeholder="Write your review here...">'+esc(reviewText)+'</textarea><div class="review-meta"><span class="notice">Optional · Anonymous</span><span class="notice" id="reviewCount">'+reviewText.length+'/500</span></div></div><div class="row" style="margin-top:15px"><span class="notice">Edit access is private and saved on this device.</span><button class="primary" id="send" '+(!existing?'disabled':'')+'>'+(savedRecord?'Update my rating':'Post rating')+'</button></div><div id="message" class="notice" role="status" style="margin-top:10px"></div></form></section>';
+  const bindEditToggle=()=>{const toggle=document.getElementById('editToggle');if(toggle)toggle.onclick=()=>{document.getElementById('votePanel').hidden=false;toggle.hidden=true;};};
+  bindEditToggle();
  bindBack(state.meal==='dinner'?'category':'home');
  let chosen=existing;const review=document.getElementById('reviewText');
  review.oninput=()=>document.getElementById('reviewCount').textContent=review.value.length+'/500';
@@ -138,24 +140,25 @@ async function renderRate(){
   e.preventDefault();if(!chosen)return;
   const btn=document.getElementById('send'),msg=document.getElementById('message');btn.disabled=true;btn.textContent=saved?'Updating…':'Posting…';
   try{
-   const reviewValue=review.value.trim();
-   if(saved?.edit_token){
-    await api('edit-rating',{edit_token:saved.edit_token,taste_rating:chosen,review:reviewValue});
-    saved={...saved,taste_rating:chosen,review:reviewValue};
-    saveEditRecord(s,saved);
+   const reviewValue=review.value.trim(),previous=Number(savedRecord?.taste_rating)||0;
+   let nextRecord;
+   if(savedRecord?.edit_token){
+    await api('edit-rating',{edit_token:savedRecord.edit_token,taste_rating:chosen,review:reviewValue});
+    nextRecord={...savedRecord,taste_rating:chosen,review:reviewValue};
    }else{
     const result=await api('submit-rating',{visitor_token:visitorToken(),meal:s.meal,category:s.category,taste_rating:chosen,review:reviewValue,event_id:s.event_id||undefined});
-    saved={edit_token:result.edit_token,taste_rating:chosen,review:reviewValue};
-    saveEditRecord(s,saved);
+    nextRecord={edit_token:result.edit_token,taste_rating:chosen,review:reviewValue};
    }
-   summaryCache.delete(sessionKey(s));
-   await updateRateMeter(s);
-   let notice=document.getElementById('savedNotice');
-   if(!notice){notice=document.createElement('section');notice.id='savedNotice';notice.className='panel edit-saved';document.getElementById('votePanel').before(notice)}
-   notice.innerHTML='<div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button>';
-   document.getElementById('votePanel').hidden=true;
-   document.getElementById('editToggle').onclick=()=>{document.getElementById('votePanel').hidden=false;notice.hidden=true};
-   msg.textContent='';
+   saveEditRecord(s,nextRecord);savedRecord=nextRecord;
+   if(previous>0)liveCounts[previous-1]=Math.max(0,liveCounts[previous-1]-1);
+   liveCounts[chosen-1]++;
+   const livePanel=app.querySelector('#liveMeter');
+   if(livePanel)livePanel.innerHTML='<div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:liveCounts},'Taste');
+   const votePanel=document.getElementById('votePanel');if(votePanel)votePanel.hidden=true;
+   let savedPanel=app.querySelector('.edit-saved');
+   if(!savedPanel){savedPanel=document.createElement('section');savedPanel.className='panel edit-saved';votePanel.parentNode.insertBefore(savedPanel,votePanel);}
+   savedPanel.innerHTML='<div class="row"><div><h2>Your rating is saved</h2><p>Your meter has been updated. You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button>';
+   bindEditToggle();btn.textContent='Update my rating';btn.disabled=false;
   }catch(err){msg.textContent=err.message||'Unable to submit rating.';btn.disabled=false;btn.textContent=saved?'Update rating':'Post'}
  };
 }
