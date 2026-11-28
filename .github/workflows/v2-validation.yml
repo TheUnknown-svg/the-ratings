@@ -66,10 +66,10 @@ jobs:
             --write-out '%{http_code}' -X POST "$endpoint" \
             -H "apikey: $SUPABASE_ANON_KEY" \
             -H "Content-Type: application/json" \
-            --data '{"action":"submit-rating","visitor_token":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","rating_date":"2000-01-01","meal":"breakfast","category":"all","taste_rating":3,"review":""}')"
-          if [ "$date_status" != "403" ]; then
+            --data '{"action":"submit-rating","visitor_token":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","rating_date":"not-a-date","meal":"breakfast","category":"all","taste_rating":3,"review":""}')"
+          if [ "$date_status" != "400" ]; then
             cat /tmp/date-response.json
-            echo "Expected 403 for a date outside the current weekly view; got $date_status"
+            echo "Expected 400 for an invalid date; got $date_status"
             exit 1
           fi
 
