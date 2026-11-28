@@ -106,7 +106,7 @@ async function renderRate(){
  const meterPanel='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:counts(summary)},'Taste')+'</section>';
  const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
  if(!isToday(state.day)){
-  app.innerHTML=head+meterPanel+'<section class="panel"><p>Past and future sessions are view-only. Today's meal ratings stay open 24/7.</p></section>';bindBack(state.meal==='dinner'?'category':'home');return;
+  app.innerHTML=head+meterPanel+'<section class="panel"><p>Past and future sessions are view-only. Today\'s meal ratings stay open 24/7.</p></section>';bindBack(state.meal==='dinner'?'category':'home');return;
  }
  const existing=Number(saved?.taste_rating)||0,reviewText=saved?.review||'';
   const savedNotice=saved?'<section class="panel edit-saved"><div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button></section>':'';
