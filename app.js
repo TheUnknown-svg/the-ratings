@@ -31,6 +31,7 @@ function visitorToken(){
 }
 function adminStore(){try{const raw=sessionStorage.getItem('tu_v2_admin_session');return raw?JSON.parse(raw):null}catch{return null}}
 function setAdminStore(v){adminSession=v;try{if(v)sessionStorage.setItem('tu_v2_admin_session',JSON.stringify(v));else sessionStorage.removeItem('tu_v2_admin_session')}catch{}}
+adminSession=adminStore();
 async function api(action,data={},token=null){
  const bearer=token||API_KEY;
  const res=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'application/json','apikey':API_KEY,'Authorization':'Bearer '+bearer},body:JSON.stringify({action,...data})});
