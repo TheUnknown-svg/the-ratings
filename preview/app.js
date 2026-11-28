@@ -103,19 +103,33 @@ async function getSummaries(sessions,force=false){
   missing.push({i,s,key});
  });
  if(missing.length){
+  let batchWorked=false;
   try{
    const response=await api('rating-summaries',{sessions:missing.map(({s})=>s.event_id?{event_id:s.event_id}:{rating_date:s.rating_date,meal:s.meal,category:s.category})});
    const rows=Array.isArray(response.summaries)?response.summaries:[];
-   missing.forEach(({i,key},j)=>{
-    const item=rows[j];
-    if(item?.success){
-     const value=item.summary||{total_ratings:0,very_bad:0,bad:0,good:0,very_good:0};
-     values[i]=value;
-     const entry={at:Date.now(),value};summaryCache.set(key,entry);
-     safeWrite('tu_v2_summary_'+key,JSON.stringify(entry));
-    }else values[i]=null;
+   if(response.success===true&&rows.length===missing.length){
+    missing.forEach(({i,key},j)=>{
+     const item=rows[j];
+     if(item?.success){
+      const value=item.summary||{total_ratings:0,very_bad:0,bad:0,good:0,very_good:0};
+      values[i]=value;
+      const entry={at:Date.now(),value};summaryCache.set(key,entry);
+      safeWrite('tu_v2_summary_'+key,JSON.stringify(entry));
+     }else values[i]=null;
+    });
+    batchWorked=true;
+   }
+  }catch{}
+  // Compatibility fallback: an unavailable or malformed batch must never blank
+  // the entire Overall page when the single-summary endpoint is still healthy.
+  if(!batchWorked||missing.some(({i})=>!values[i])){
+   const retry=missing.filter(({i})=>!values[i]);
+   const recovered=await Promise.allSettled(retry.map(({s})=>getSummary(s,true)));
+   recovered.forEach((result,j)=>{
+    const index=retry[j].i;
+    values[index]=result.status==='fulfilled'?result.value:null;
    });
-  }catch{missing.forEach(({i})=>values[i]=null)}
+  }
  }
  return Promise.all(values.map(async value=>{try{return await value}catch{return null}}));
 }
@@ -124,40 +138,43 @@ function paintMeter(panel,summary){
  if(!panel?.isConnected)return;
  const holder=document.createElement('div');
  holder.innerHTML=meter({counts:counts(summary)},'Taste');
- const fresh=holder.querySelector('svg.gauge'),current=panel.querySelector('svg.gauge');
- if(fresh&&current){
-  const nextPaths=fresh.querySelectorAll('.meter-segment'),oldPaths=current.querySelectorAll('.meter-segment');
-  nextPaths.forEach((next,i)=>{
-   const old=oldPaths[i];if(!old)return;
-   const targetStart=Number(next.getAttribute('data-start')||180),targetEnd=Number(next.getAttribute('data-end')||180);
-   const fromStart=Number(old.getAttribute('data-start')??targetStart),fromEnd=Number(old.getAttribute('data-end')??targetEnd);
-   ['stroke','stroke-width','opacity','stroke-linecap'].forEach(attr=>old.setAttribute(attr,next.getAttribute(attr)||''));
-   old.setAttribute('data-count',next.getAttribute('data-count')||'0');
-   if(old._meterFrame)cancelAnimationFrame(old._meterFrame);
-   const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-   if(!reduced&&typeof requestAnimationFrame==='function'){
-    const started=performance.now(),duration=420;
-    const animate=now=>{
-     if(!old.isConnected){old._meterFrame=0;return}
-     const progress=Math.min(1,(now-started)/duration),eased=1-Math.pow(1-progress,3);
-     const a=fromStart+(targetStart-fromStart)*eased,b=fromEnd+(targetEnd-fromEnd)*eased;
-     old.setAttribute('d',meterArcPath(a,b));
-     old.setAttribute('data-start',String(a));old.setAttribute('data-end',String(b));
-     if(progress<1)old._meterFrame=requestAnimationFrame(animate);
-     else{old._meterFrame=0;old.setAttribute('d',next.getAttribute('d')||'');old.setAttribute('data-start',String(targetStart));old.setAttribute('data-end',String(targetEnd))}
-    };
-    old._meterFrame=requestAnimationFrame(animate);
-   }else{
-    old.setAttribute('d',next.getAttribute('d')||'');
-    old.setAttribute('data-start',String(targetStart));old.setAttribute('data-end',String(targetEnd));
-   }
-  });
-  current.setAttribute('aria-label',fresh.getAttribute('aria-label')||'');
-  const nextTexts=fresh.querySelectorAll('text'),oldTexts=current.querySelectorAll('text');
-  nextTexts.forEach((node,i)=>{if(oldTexts[i]){oldTexts[i].textContent=node.textContent;oldTexts[i].setAttribute('style',node.getAttribute('style')||'')}});
-  const nextLegend=holder.querySelectorAll('.legendline b'),oldLegend=panel.querySelectorAll('.legendline b');
-  nextLegend.forEach((node,i)=>{if(oldLegend[i])oldLegend[i].textContent=node.textContent});
- }else{panel.innerHTML=holder.innerHTML}
+ const fresh=holder.querySelector('.meter-layout'),current=panel.querySelector('.meter-layout');
+ if(!fresh||!current){if(fresh)panel.innerHTML=holder.innerHTML;return}
+ const oldPaths=current.querySelectorAll('.meter-segment');
+ const nextPaths=fresh.querySelectorAll('.meter-segment');
+ const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+ const animations=[];
+ nextPaths.forEach((next,i)=>{
+  const old=oldPaths[i];
+  const targetStart=Number(next.getAttribute('data-start')||180);
+  const targetEnd=Number(next.getAttribute('data-end')||180);
+  const fromStart=Number(old?.getAttribute('data-start')??targetStart);
+  const fromEnd=Number(old?.getAttribute('data-end')??targetEnd);
+  next.setAttribute('data-start',String(fromStart));
+  next.setAttribute('data-end',String(fromEnd));
+  next.setAttribute('d',meterArcPath(fromStart,fromEnd));
+  animations.push({node:next,fromStart,fromEnd,targetStart,targetEnd,targetD:meterArcPath(targetStart,targetEnd)});
+ });
+ current.replaceWith(fresh);
+ const duration=460;
+ animations.forEach(({node,fromStart,fromEnd,targetStart,targetEnd,targetD})=>{
+  if(reduced||typeof requestAnimationFrame!=='function'){
+   node.setAttribute('d',targetD);node.setAttribute('data-start',String(targetStart));node.setAttribute('data-end',String(targetEnd));return;
+  }
+  const started=performance.now();
+  const animate=now=>{
+   if(!node.isConnected)return;
+   const progress=Math.min(1,(now-started)/duration);
+   const eased=1-Math.pow(1-progress,3);
+   const a=fromStart+(targetStart-fromStart)*eased;
+   const b=fromEnd+(targetEnd-fromEnd)*eased;
+   node.setAttribute('d',meterArcPath(a,b));
+   node.setAttribute('data-start',String(a));node.setAttribute('data-end',String(b));
+   if(progress<1)requestAnimationFrame(animate);
+   else{node.setAttribute('d',targetD);node.setAttribute('data-start',String(targetStart));node.setAttribute('data-end',String(targetEnd))}
+  };
+  requestAnimationFrame(animate);
+ });
 }
 
 function setTheme(){document.body.className=state.page==='rate'?'cosmic':state.page==='overall'?'aurora':''}
