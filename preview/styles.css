@@ -120,3 +120,8 @@ html{scroll-behavior:auto}
 #liveMeter.meter-updating{opacity:.55;transform:translateY(2px) scale(.995)}
 #liveMeter .meter-segment{transition:opacity .24s ease,stroke-width .24s ease}
 @media(prefers-reduced-motion:reduce){#liveMeter,#liveMeter .meter-segment{transition:none!important}}
+
+/* Animate semicircle segments in place without replacing the SVG. */
+#liveMeter .meter-segment{transition:stroke-dasharray .55s cubic-bezier(.2,.75,.25,1),stroke-dashoffset .55s cubic-bezier(.2,.75,.25,1),opacity .3s ease}
+#liveMeter .number{transition:fill .25s ease}
+@media(prefers-reduced-motion:reduce){#liveMeter .meter-segment,#liveMeter .number{transition:none!important}}
