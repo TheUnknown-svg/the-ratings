@@ -143,7 +143,7 @@ function renderHome(){
 }
 function renderCategory(){
  setTheme();const cats=categoryOptions(state.day,'dinner');
- app.innerHTML='<button class="back" id="back">← All meals</button><div class="kicker">'+DAYS[state.day]+' · DINNER</div><h1>Choose dinner type.</h1><div class="choicegrid">'+(cats.map(c=>'<button class="choice" data-cat="'+esc(c)+'"><span>'+(c==='veg'?'🥬':'🍗')+'</span><h3>'+(c==='veg'?'Veg':'Non-Veg')+'</h3><small>Open rating page</small></button>').join('')||'<div class="empty">No dinner options scheduled for this weekday.</div>')+'</div>';
+ app.innerHTML='<button class="back" id="back">← All meals</button><div class="kicker">'+DAYS[state.day]+' · '+dateFor(state.day)+' · DINNER</div><h1>Choose dinner type.</h1><div class="choicegrid">'+(cats.map(c=>'<button class="choice" data-cat="'+esc(c)+'"><span>'+(c==='veg'?'🥬':'🍗')+'</span><h3>'+(c==='veg'?'Veg':'Non-Veg')+'</h3><small>Open rating page</small></button>').join('')||'<div class="empty">No dinner options scheduled for this weekday.</div>')+'</div>';
  bindBack('home');app.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{state.category=b.dataset.cat;go('rate')});
 }
 async function renderRate(){
@@ -152,7 +152,7 @@ async function renderRate(){
   if(!cachedSummary){try{cachedSummary=JSON.parse(safeRead('tu_v2_summary_'+sessionKey(s))||'null');if(cachedSummary?.value)summaryCache.set(sessionKey(s),cachedSummary)}catch{}}
   let liveCounts=counts(cachedSummary?.value||{});
  const meterPanel='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:liveCounts},'Taste')+'</section>';
- const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+dateFor(state.day)+' · '+state.meal.toUpperCase() '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
+ const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+dateFor(state.day)+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
  let savedRecord=saved;
  const existing=Number(savedRecord?.taste_rating)||0,reviewText=savedRecord?.review||'';
   const savedNotice=savedRecord?'<section class="panel edit-saved" id="savedNotice"><div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button></section>':'';
