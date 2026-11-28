@@ -26,3 +26,44 @@ jobs:
           deno-version: v2.x
       - name: Check Supabase Edge Function
         run: deno check supabase/functions/unknown-ratings-api/index.ts
+
+      - name: Smoke-test public API and reject unauthenticated admin actions
+        env:
+          SUPABASE_URL: https://vvgvjfghtkhnqvbhjqcb.supabase.co
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          endpoint="$SUPABASE_URL/functions/v1/unknown-ratings-api"
+          test -n "$SUPABASE_ANON_KEY"
+
+          curl --fail --silent --show-error "$endpoint" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -o /tmp/health.json
+          node -e "const x=require('/tmp/health.json'); if(!x.success || x.status !== 'Backend connected') process.exit(1)"
+
+          check_unauthorized() {
+            local payload="$1"
+            local status
+            status="$(curl --silent --show-error --output /tmp/admin-response.json \
+              --write-out '%{http_code}' -X POST "$endpoint" \
+              -H "apikey: $SUPABASE_ANON_KEY" \
+              -H "Content-Type: application/json" \
+              --data "$payload")"
+            if [ "$status" != "401" ]; then
+              cat /tmp/admin-response.json
+              echo "Expected 401 for unauthenticated admin action; got $status"
+              exit 1
+            fi
+          }
+
+          check_unauthorized '{"action":"admin-check"}'
+          check_unauthorized '{"action":"admin-save-schedule"}'
+          check_unauthorized '{"action":"admin-save-event"}'
+          check_unauthorized '{"action":"admin-delete-event"}'
+
+          cors_status="$(curl --silent --show-error --output /tmp/cors-response.json \
+            --write-out '%{http_code}' "$endpoint" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Origin: https://untrusted.example")"
+          test "$cors_status" = "403"
