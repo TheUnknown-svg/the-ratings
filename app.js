@@ -6,8 +6,8 @@ const API_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/functions/v1/unknown-rat
 const AUTH_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/auth/v1';
 const API_KEY='sb_publishable_T_WBo0M8GVAE3Eo-bY6QQA_E1YX20vm';
 const app=document.getElementById('app');
-let schedules=[],events=[],pageVersion=0,poll=null,adminSession=null,adminUser=null;
-let state={page:'home',day:currentBishkek().weekday,meal:'',category:'',session:null,notice:''};
+let schedules=[],events=[],pageVersion=0,poll=null,adminSession=null;
+let state={page:'home',day:currentBishkek().weekday,meal:'',category:'',session:null};
 function currentBishkek(){
  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Bishkek',year:'numeric',month:'2-digit',day:'2-digit',weekday:'short'}).formatToParts(new Date());
  const v={};for(const p of parts)if(p.type!=='literal')v[p.type]=p.value;
@@ -101,7 +101,7 @@ async function renderRate(){
  setTheme();const id=++pageVersion,s=sessionFor(state.day,state.meal,state.category),saved=editRecord(s);
  app.innerHTML='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1><div id="liveMeter" class="empty">Loading live ratings…</div>';
  bindBack(state.meal==='dinner'?'category':'home');
- let summary;try{summary=await getSummary(s)}catch(e){summary={};state.notice=e.message}
+ let summary;try{summary=await getSummary(s)}catch{summary={}}
  if(id!==pageVersion)return;
  const meterPanel='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:counts(summary)},'Taste')+'</section>';
  const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
@@ -129,7 +129,6 @@ async function renderRate(){
     const result=await api('submit-rating',{visitor_token:visitorToken(),meal:s.meal,category:s.category,taste_rating:chosen,review:reviewValue,event_id:s.event_id||undefined});
     saveEditRecord(s,{edit_token:result.edit_token,taste_rating:chosen,review:reviewValue});
    }
-   state.notice=saved?'Your rating was updated.':'Your rating was submitted.';
    await renderRate();
   }catch(err){msg.textContent=err.message||'Unable to submit rating.';btn.disabled=false;btn.textContent=saved?'Update rating':'Post'}
  };
@@ -147,10 +146,9 @@ async function renderOverall(){
  const dayEvents=events.filter(e=>e.event_date===date);
  let summaries;
  try{summaries=await Promise.all([...regular.map(getSummary),...dayEvents.map(e=>getSummary({event_id:e.id}))])}
- catch(e){state.notice=e.message;summaries=regular.map(()=>({}))}
+ catch{summaries=regular.map(()=>({}))}
  if(id!==pageVersion)return;
  const norm=summaries.slice(0,4),extra=summaries.slice(4);
- const byCat=(cat,meal)=>[norm[meal],...dayEvents.map((e,i)=>e.meal===mealName(meal)&&e.category===cat?extra[i]:null).filter(Boolean)];
  const breakfast=[norm[0],...dayEvents.map((e,i)=>e.meal==='breakfast'?extra[i]:null).filter(Boolean)];
  const lunch=[norm[1],...dayEvents.map((e,i)=>e.meal==='lunch'?extra[i]:null).filter(Boolean)];
  const veg=[norm[2],...dayEvents.map((e,i)=>e.meal==='dinner'&&e.category==='veg'?extra[i]:null).filter(Boolean)];
@@ -164,11 +162,10 @@ async function renderOverall(){
  resultCard('Breakfast Overall','Breakfast · '+DAYS[state.day],sumSummaries(breakfast));
  bindBack('home');bindDays();
 }
-function mealName(i){return ['breakfast','lunch','dinner'][i]}
 async function verifyAdmin(){
  if(!adminSession?.access_token)return false;
- try{const r=await api('admin-check',{},adminSession.access_token);adminUser=r.user||true;return !!r.is_admin}
- catch{setAdminStore(null);adminUser=null;return false}
+ try{const r=await api('admin-check',{},adminSession.access_token);return !!r.is_admin}
+ catch{setAdminStore(null);return false}
 }
 function renderAdminLogin(error=''){
  setTheme();
@@ -200,7 +197,7 @@ async function renderAdmin(){
  '<section class="panel"><h2>Weekly meal schedule</h2><p>Changes are saved to Supabase and apply to the live site.</p><form id="scheduleForm">'+scheduleFields+'<button class="primary" id="saveSchedule">Save all 21 schedule entries</button><span class="notice" id="scheduleMsg" role="status"></span></form></section>'+
  '<section class="panel"><h2>Temporary event session</h2><p>Create a dated one-time meal session. Existing ratings remain attached if an event is deactivated.</p><form id="eventForm"><div class="admin-grid"><div class="adminbox"><label>Date</label><input class="field" id="eventDate" type="date" required><label>Meal</label><select class="field" id="eventMeal"><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option></select><label>Category</label><select class="field" id="eventCategory"><option value="all">All</option><option value="veg">Veg</option><option value="nonveg">Non-Veg</option></select></div><div class="adminbox"><label>Event name</label><input class="field" id="eventName" maxlength="150" placeholder="Special event"><label>Opens</label><input class="field" id="eventOpen" type="time" value="12:00" required><label>Closes</label><input class="field" id="eventClose" type="time" value="15:00" required></div></div><button class="primary" id="saveEvent" style="margin-top:14px">Create event</button><span class="notice" id="eventMsg" role="status"></span></form><div id="eventsList" style="margin-top:16px">'+(events.map(ev=>'<div class="row" style="padding:10px 0;border-bottom:1px solid var(--line)"><span>'+esc(ev.event_name||ev.meal)+' · '+esc(ev.event_date)+' · '+esc(ev.category)+' · '+esc(timeValue(ev.opens_at))+'–'+esc(timeValue(ev.closes_at))+'</span><button class="secondary" data-event-delete="'+esc(ev.id)+'">Deactivate</button></div>').join('')||'<div class="empty">No active temporary events.</div>')+'</div></section>'+
  '<p class="notice">Administrator access is verified by Supabase Auth and the server-side admin_users allow-list. Never share your admin password or edit token.</p>';
- document.getElementById('logout').onclick=()=>{setAdminStore(null);adminUser=null;renderAdminLogin()};
+ document.getElementById('logout').onclick=()=>{setAdminStore(null);renderAdminLogin()};
  document.getElementById('scheduleForm').onsubmit=async ev=>{
   ev.preventDefault();const btn=document.getElementById('saveSchedule'),msg=document.getElementById('scheduleMsg');btn.disabled=true;msg.textContent='Saving…';
   const rows=[];for(let d=0;d<7;d++)for(const m of MEALS){const o=document.getElementById('open-'+d+'-'+m).value,c=document.getElementById('close-'+d+'-'+m).value;if(!o||!c||o>=c){msg.textContent='Check opening and closing times for '+DAYS[d]+' '+m+'.';btn.disabled=false;return}rows.push({weekday:d,meal:m,opens_at:o,closes_at:c,veg_enabled:document.getElementById('veg-'+d+'-'+m).checked,nonveg_enabled:document.getElementById('nonveg-'+d+'-'+m).checked})}
