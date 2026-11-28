@@ -242,3 +242,33 @@ textarea,.field{background:#0b0f18;border-color:rgba(160,170,200,.22);color:#f4f
  #app>.hero,#app>.days,#app>.grid,#app>.choicegrid,#app>.panel,#app>.results-summary,#app>.results-grid,#app>.notice,#app>.empty,
  .results-grid .result-card{animation:none!important}
 }
+
+
+/* Site-wide motion system: short, GPU-friendly transitions and restrained entrance motion. */
+:root{--motion-fast:150ms;--motion-base:220ms;--motion-enter:360ms;--motion-ease:cubic-bezier(.2,.75,.25,1)}
+#app{animation:appFadeIn 180ms ease-out both}
+@keyframes appFadeIn{from{opacity:.72}to{opacity:1}}
+#app .panel,#app .tile,#app .choice,#app .notice,#app .empty{
+ transition:background var(--motion-base) var(--motion-ease),border-color var(--motion-base) var(--motion-ease),box-shadow var(--motion-base) var(--motion-ease),transform var(--motion-base) var(--motion-ease),opacity var(--motion-base) ease;
+}
+#app button{
+ -webkit-tap-highlight-color:transparent;
+ touch-action:manipulation;
+ transition:background-color var(--motion-fast) ease,border-color var(--motion-fast) ease,color var(--motion-fast) ease,box-shadow var(--motion-fast) ease,transform var(--motion-fast) var(--motion-ease),filter var(--motion-fast) ease;
+}
+#app button:active:not(:disabled){transform:scale(.975)}
+#app button:disabled{cursor:wait;filter:saturate(.7);opacity:.72}
+#app .rate{transition:transform var(--motion-fast) var(--motion-ease),background var(--motion-fast) ease,border-color var(--motion-fast) ease,box-shadow var(--motion-fast) ease,color var(--motion-fast) ease}
+#app .rate.selected{transform:translateY(-2px) scale(1.015)}
+#app .primary:not(:disabled){box-shadow:0 7px 22px rgba(183,92,245,.2)}
+#app .primary:not(:disabled):active{box-shadow:0 2px 9px rgba(183,92,245,.16)}
+#app input,#app textarea,#app select{transition:border-color var(--motion-fast) ease,box-shadow var(--motion-fast) ease,background var(--motion-fast) ease}
+#app input:focus,#app textarea:focus,#app select:focus{box-shadow:0 0 0 3px rgba(183,92,245,.13)}
+@media(hover:hover){
+ #app .tile:hover,#app .choice:hover{transform:translateY(-3px)}
+ #app .panel:hover{border-color:rgba(160,170,200,.24)}
+}
+@media(prefers-reduced-motion:reduce){
+ #app{animation:none!important}
+ #app *,#app *::before,#app *::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}
+}
