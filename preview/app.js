@@ -246,7 +246,7 @@ async function renderOverall(){
   const node=document.getElementById('resultsStatus');if(!node)return;
   node.innerHTML=failed?'<span>'+failed+' result '+(failed===1?'request':'requests')+' could not be loaded. Other meters remain available.</span> <button type="button" class="secondary" id="retryResults">Retry</button>':'';
   const retry=document.getElementById('retryResults');
-  if(retry)retry.onclick=()=>{retry.disabled=true;retry.textContent='Retrying…';summaryCache.clear();summaryRequests.clear();renderOverall()};
+  if(retry)retry.onclick=()=>{retry.disabled=true;retry.textContent='Retrying…';summaryCache.clear();summaryRequests.clear();sessions.forEach(session=>{try{localStorage.removeItem('tu_v2_summary_'+sessionKey(session))}catch{}});renderOverall()};
  };
  const zero={total_ratings:0,very_bad:0,bad:0,good:0,very_good:0};
  app.innerHTML='<button class="back" id="back">← Home</button>'+heading+dayNav()+
