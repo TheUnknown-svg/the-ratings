@@ -90,6 +90,34 @@ async function getSummary(s,force=false){
  }).finally(()=>{if(summaryRequests.get(key)===request)summaryRequests.delete(key)});
  summaryRequests.set(key,request);return request;
 }
+async function getSummaries(sessions,force=false){
+ const values=new Array(sessions.length),missing=[];
+ sessions.forEach((s,i)=>{
+  const key=sessionKey(s),pending=summaryRequests.get(key);
+  if(pending){values[i]=pending;return}
+  let cached=summaryCache.get(key);
+  if(!cached){try{const disk=JSON.parse(safeRead('tu_v2_summary_'+key)||'null');if(disk?.value){cached=disk;summaryCache.set(key,disk)}}catch{}}
+  if(!force&&cached&&Date.now()-cached.at<8000){values[i]=cached.value;return}
+  missing.push({i,s,key});
+ });
+ if(missing.length){
+  try{
+   const response=await api('rating-summaries',{sessions:missing.map(({s})=>s.event_id?{event_id:s.event_id}:{rating_date:s.rating_date,meal:s.meal,category:s.category})});
+   const rows=Array.isArray(response.summaries)?response.summaries:[];
+   missing.forEach(({i,key},j)=>{
+    const item=rows[j];
+    if(item?.success){
+     const value=item.summary||{total_ratings:0,very_bad:0,bad:0,good:0,very_good:0};
+     values[i]=value;
+     const entry={at:Date.now(),value};summaryCache.set(key,entry);
+     safeWrite('tu_v2_summary_'+key,JSON.stringify(entry));
+    }else values[i]=null;
+   });
+  }catch{missing.forEach(({i})=>values[i]=null)}
+ }
+ return Promise.all(values.map(async value=>{try{return await value}catch{return null}}));
+}
+
 function paintMeter(panel,summary){
  if(!panel?.isConnected)return;
  const holder=document.createElement('div');
@@ -260,22 +288,22 @@ async function renderOverall(){
  resultCard('Breakfast Overall','Breakfast ratings',zero,'breakfast')+
  '</div>';
  bindBack('home');bindDays();paintCards();
- const pending=sessions.map((session,i)=>getSummary(session).then(summary=>{
-  if(id===pageVersion&&state.page==='overall'){results[i]=summary;paintCards()}
-  return summary;
- }));
- const settled=await Promise.allSettled(pending);
+ const loaded=await getSummaries(sessions);
  if(id!==pageVersion||state.page!=='overall')return;
- settled.forEach((item,i)=>{if(item.status==='fulfilled')results[i]=item.value});
+ loaded.forEach((summary,i)=>{if(summary)results[i]=summary});
  paintCards();
- setStatus(settled.filter(x=>x.status==='rejected').length);
+ setStatus(loaded.filter(x=>!x).length);
+ let refreshing=false;
  overallRefresh=async()=>{
-  if(id!==pageVersion||state.page!=='overall')return;
-  const refreshed=await Promise.allSettled(sessions.map(session=>getSummary(session,true)));
-  if(id!==pageVersion||state.page!=='overall')return;
-  refreshed.forEach((item,i)=>{if(item.status==='fulfilled')results[i]=item.value});
-  paintCards();
-  setStatus(refreshed.filter(x=>x.status==='rejected').length);
+  if(refreshing||id!==pageVersion||state.page!=='overall')return;
+  refreshing=true;
+  try{
+   const refreshed=await getSummaries(sessions,true);
+   if(id!==pageVersion||state.page!=='overall')return;
+   refreshed.forEach((summary,i)=>{if(summary)results[i]=summary});
+   paintCards();
+   setStatus(refreshed.filter(x=>!x).length);
+  }finally{refreshing=false}
  };
 }
 async function verifyAdmin(){
