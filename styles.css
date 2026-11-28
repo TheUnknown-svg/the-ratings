@@ -101,3 +101,16 @@ img,svg,canvas{max-width:100%;height:auto}
 @supports(padding:max(0px)){
  .shell{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
 }
+
+/* Performance: avoid repaint-heavy entrance effects on every view update. */
+.tile,.panel{animation:none!important}
+html{scroll-behavior:auto}
+@media(hover:none){
+ .tile:hover,.choice:hover,.back:hover{transform:none}
+}
+@media(orientation:landscape) and (max-height:560px){
+ .shell{padding-top:10px;padding-bottom:18px}
+ header{margin-bottom:16px}
+ .panel{margin:9px 0;padding:13px}
+ .meter-layout{gap:12px;padding:13px}
+}
