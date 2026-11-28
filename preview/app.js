@@ -142,7 +142,7 @@ function renderHome(){
 }
 function renderCategory(){
  setTheme();const cats=categoryOptions(state.day,'dinner');
- app.innerHTML='<button class="back" id="back">← All meals</button><div class="kicker">'+DAYS[state.day]+' · '+dateFor(state.day)+' · DINNER</div><h1>Choose dinner type.</h1><div class="choicegrid">'+(cats.map(c=>'<button class="choice" data-cat="'+esc(c)+'"><span>'+(c==='veg'?'🥬':'🍗')+'</span><h3>'+(c==='veg'?'Veg':'Non-Veg')+'</h3><small>Open rating page</small></button>').join('')||'<div class="empty">No dinner options scheduled for this weekday.</div>')+'</div>';
+ app.innerHTML='<button class="back" id="back">← All meals</button><div class="kicker">'+DAYS[state.day]+' · DINNER</div><h1>Choose dinner type.</h1><div class="choicegrid">'+(cats.map(c=>'<button class="choice" data-cat="'+esc(c)+'"><span>'+(c==='veg'?'🥬':'🍗')+'</span><h3>'+(c==='veg'?'Veg':'Non-Veg')+'</h3><small>Open rating page</small></button>').join('')||'<div class="empty">No dinner options scheduled for this weekday.</div>')+'</div>';
  bindBack('home');app.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{state.category=b.dataset.cat;go('rate')});
 }
 async function renderRate(){
