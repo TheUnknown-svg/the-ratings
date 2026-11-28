@@ -12,7 +12,7 @@ const PUBLIC_CACHE_KEY='tu_v2_public_cache';
 function restorePublicCache(){try{const x=JSON.parse(safeRead(PUBLIC_CACHE_KEY)||'null');if(x&&Date.now()-x.savedAt<86400000){schedules=x.schedules||[];events=x.events||[]}}catch{}}
 function savePublicCache(){safeWrite(PUBLIC_CACHE_KEY,JSON.stringify({savedAt:Date.now(),schedules,events}))}
 const ADMIN_HASH='#manage-7f3a9c2e';
-let state={page:'home',day:currentBishkek().weekday,meal:'',category:'',session:null};
+let state={page:'home',day:currentBishkek().weekday,weekOffset:0,meal:'',category:'',session:null};
 function currentBishkek(){
  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Bishkek',year:'numeric',month:'2-digit',day:'2-digit',weekday:'short'}).formatToParts(new Date());
  const v={};for(const p of parts)if(p.type!=='literal')v[p.type]=p.value;
@@ -20,9 +20,9 @@ function currentBishkek(){
  const weekday=new Date(date+'T12:00:00Z').getUTCDay();
  return {date,weekday};
 }
-function dateFor(day){
+function dateFor(day,offset=state.weekOffset||0){
  const now=currentBishkek(),d=new Date(now.date+'T12:00:00Z');
- d.setUTCDate(d.getUTCDate()-now.weekday+day);
+ d.setUTCDate(d.getUTCDate()-now.weekday+day+(offset*7));
  return d.toISOString().slice(0,10);
 }
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -81,8 +81,8 @@ async function getSummary(s,force=false){
  const key=sessionKey(s),cached=summaryCache.get(key);
  if(!cached){try{const disk=JSON.parse(safeRead('tu_v2_summary_'+key)||'null');if(disk?.value)summaryCache.set(key,disk)}catch{}}
  const current=summaryCache.get(key);
- if(!force&&current&&Date.now()-current.at<30000)return current.value;
- if(!force&&summaryRequests.has(key))return summaryRequests.get(key);
+ if(summaryRequests.has(key))return summaryRequests.get(key);
+ if(!force&&current&&Date.now()-current.at<8000)return current.value;
  const payload=s.event_id?{event_id:s.event_id}:{rating_date:s.rating_date,meal:s.meal,category:s.category};
  const request=api('rating-summary',payload).then(r=>{
   const value=r.summary||{total_ratings:0,very_bad:0,bad:0,good:0,very_good:0};
@@ -116,12 +116,18 @@ function snap(){return {tuRatings:true,page:state.page,day:state.day,meal:state.
 function go(p){state.page=p;historyDepth++;try{history.pushState(snap(),'',p==='admin'?ADMIN_HASH:'#'+p)}catch{historyDepth=Math.max(0,historyDepth-1)}render()}
 function back(fallback){if(historyDepth>0){history.back();return}state.page=fallback||'home';render()}
 window.addEventListener('popstate',e=>{
- if(e.state?.tuRatings){state.page=e.state.page||'home';state.day=e.state.day??state.day;state.meal=e.state.meal||'';state.category=e.state.category||'';historyDepth=Math.max(0,e.state.depth||0)}
+ if(e.state?.tuRatings){state.page=e.state.page||'home';state.day=e.state.day??state.day;state.weekOffset=e.state.weekOffset??0;state.meal=e.state.meal||'';state.category=e.state.category||'';historyDepth=Math.max(0,e.state.depth||0)}
  else{state.page='home';state.meal='';state.category='';historyDepth=0}
  render();
 });
-function dayNav(){return '<div class="days">'+DAYS.map((d,i)=>'<button class="day '+(i===state.day?'active':'')+'" data-day="'+i+'">'+d+'</button>').join('')+'</div>'}
-function bindDays(){app.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{state.day=Number(b.dataset.day);render()})}
+function dayNav(){
+ const start=dateFor(0),end=dateFor(6),fmt=x=>new Date(x+'T12:00:00Z').toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'});
+ return '<div class="week-nav"><button class="week-shift" data-week="-1" aria-label="Previous week">‹</button><strong>'+fmt(start)+' – '+fmt(end)+'</strong><button class="week-shift" data-week="1" aria-label="Next week">›</button><button class="week-today" data-week="today">Today</button></div><div class="days">'+DAYS.map((d,i)=>'<button class="day '+(i===state.day?'active':'')+'" data-day="'+i+'"><span>'+d.slice(0,3)+'</span><small>'+fmt(dateFor(i))+'</small></button>').join('')+'</div>';
+}
+function bindDays(){
+ app.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{state.day=Number(b.dataset.day);render()});
+ app.querySelectorAll('[data-week]').forEach(b=>b.onclick=()=>{if(b.dataset.week==='today'){state.weekOffset=0;state.day=currentBishkek().weekday}else state.weekOffset=(state.weekOffset||0)+Number(b.dataset.week);render()});
+}
 function bindBack(fallback){const b=document.getElementById('back');if(b)b.onclick=()=>back(fallback)}
 function resultCard(title,subtitle,summary){
  const c=Array.isArray(summary?.counts)?summary.counts:counts(summary);
@@ -146,7 +152,7 @@ async function renderRate(){
   if(!cachedSummary){try{cachedSummary=JSON.parse(safeRead('tu_v2_summary_'+sessionKey(s))||'null');if(cachedSummary?.value)summaryCache.set(sessionKey(s),cachedSummary)}catch{}}
   let liveCounts=counts(cachedSummary?.value||{});
  const meterPanel='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:liveCounts},'Taste')+'</section>';
- const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
+ const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+dateFor(state.day)+' · '+state.meal.toUpperCase() '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
  let savedRecord=saved;
  const existing=Number(savedRecord?.taste_rating)||0,reviewText=savedRecord?.review||'';
   const savedNotice=savedRecord?'<section class="panel edit-saved" id="savedNotice"><div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button></section>':'';
@@ -279,7 +285,7 @@ function render(){
  if(poll){clearInterval(poll);poll=null}
  if(state.page==='home')renderHome();
  else if(state.page==='category')renderCategory();
- else if(state.page==='rate'){renderRate();poll=setInterval(()=>{if(document.visibilityState==='visible'&&state.page==='rate')refreshRateMeter()},45000)}
+ else if(state.page==='rate'){renderRate();poll=setInterval(()=>{if(document.visibilityState==='visible'&&state.page==='rate')refreshRateMeter()},10000)}
  else if(state.page==='overall'){renderOverall()}
  else if(state.page==='admin')renderAdmin();
 }
@@ -291,6 +297,7 @@ historyDepth=0;try{history.replaceState(snap(),'',state.page==='admin'?ADMIN_HAS
 restorePublicCache();
 render();
 loadPublic().then(()=>{if(state.page==='home'||state.page==='category')render()}).catch(()=>{});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&state.page==='rate')refreshRateMeter()});
 
 function getPercentLabels(counts){
  const total=counts.reduce((a,b)=>a+b,0);
