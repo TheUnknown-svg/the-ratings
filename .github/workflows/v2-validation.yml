@@ -73,6 +73,20 @@ jobs:
             exit 1
           fi
 
+          # A historical date must pass date-range validation; invalid meal then returns 400, not the old 403 week block.
+          for selected_date in "2000-01-01" "2099-01-01"; do
+            selected_status="$(curl --silent --show-error --output /tmp/selected-date-response.json \
+              --write-out '%{http_code}' -X POST "$endpoint" \
+              -H "apikey: $SUPABASE_ANON_KEY" \
+              -H "Content-Type: application/json" \
+              --data "{\"action\":\"submit-rating\",\"visitor_token\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"rating_date\":\"$selected_date\",\"meal\":\"invalid\",\"category\":\"all\",\"taste_rating\":3,\"review\":\"\"}")"
+            if [ "$selected_status" != "400" ]; then
+              cat /tmp/selected-date-response.json
+              echo "Selected date $selected_date was blocked before normal field validation; got $selected_status"
+              exit 1
+            fi
+          done
+
           cors_status="$(curl --silent --show-error --output /tmp/cors-response.json \
             --write-out '%{http_code}' "$endpoint" \
             -H "apikey: $SUPABASE_ANON_KEY" \
