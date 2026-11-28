@@ -150,9 +150,6 @@ async function renderRate(){
  const cachedSummary=summaryCache.get(sessionKey(s));let liveCounts=counts(cachedSummary?.value||{});
  const meterPanel='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:liveCounts},'Taste')+'</section>';
  const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
- if(!isToday(state.day)){
-  app.innerHTML=head+meterPanel+'<section class="panel"><p>Past and future sessions are view-only. Today\'s meal ratings stay open 24/7.</p></section>';bindBack(state.meal==='dinner'?'category':'home');return;
- }
  let savedRecord=saved;
  const existing=Number(savedRecord?.taste_rating)||0,reviewText=savedRecord?.review||'';
   const savedNotice=savedRecord?'<section class="panel edit-saved" id="savedNotice"><div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button></section>':'';
@@ -173,7 +170,7 @@ async function renderRate(){
     await api('edit-rating',{edit_token:savedRecord.edit_token,taste_rating:chosen,review:reviewValue});
     nextRecord={...savedRecord,taste_rating:chosen,review:reviewValue};
    }else{
-    const result=await api('submit-rating',{visitor_token:visitorToken(),meal:s.meal,category:s.category,taste_rating:chosen,review:reviewValue,event_id:s.event_id||undefined});
+    const result=await api('submit-rating',{visitor_token:visitorToken(),rating_date:s.rating_date,meal:s.meal,category:s.category,taste_rating:chosen,review:reviewValue,event_id:s.event_id||undefined});
     nextRecord={edit_token:result.edit_token,taste_rating:chosen,review:reviewValue};
    }
    saveEditRecord(s,nextRecord);savedRecord=nextRecord;
@@ -188,7 +185,7 @@ async function renderRate(){
   }catch(err){msg.textContent=err.message||'Unable to submit rating.';btn.disabled=false;btn.textContent=savedRecord?'Update rating':'Post'}
  });
  // Show the form immediately; refresh only the meter after the live summary arrives.
- getSummary(s,true).then(summary=>{
+ getSummary(s,false).then(summary=>{
   if(id!==pageVersion)return;
   liveCounts=counts(summary);
   paintMeter(app.querySelector('#liveMeter'),summary);
