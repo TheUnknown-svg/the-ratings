@@ -102,7 +102,7 @@ async function renderRate(){
  bindBack(state.meal==='dinner'?'category':'home');
  let summary;try{summary=await getSummary(s)}catch(e){summary={};state.notice=e.message}
  if(id!==pageVersion)return;
- const meterPanel='<section class="panel"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:counts(summary)},'Taste')+'</section>';
+ const meterPanel='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:counts(summary)},'Taste')+'</section>';
  const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
  if(!isToday(state.day)){
   app.innerHTML=head+meterPanel+'<section class="panel"><p>Past and future sessions are view-only. Ratings can only be submitted during today's scheduled meal window.</p></section>';bindBack(state.meal==='dinner'?'category':'home');return;
@@ -171,13 +171,13 @@ function renderAdminLogin(error=''){
  app.innerHTML='<button class="back" id="back">← Home</button><div class="kicker">SECURE ADMINISTRATION</div><h1>Admin sign in.</h1><section class="panel"><p>Use the administrator account created in Supabase Authentication.</p><form id="adminLogin"><label>Email</label><input class="field" id="adminEmail" type="email" autocomplete="username" required><label style="display:block;margin-top:12px">Password</label><input class="field" id="adminPassword" type="password" autocomplete="current-password" required><button class="primary" id="loginButton" style="margin-top:15px">Sign in</button><p id="loginError" class="notice" role="alert" style="margin-top:12px">'+esc(error)+'</p></form></section>';
  bindBack('home');
  document.getElementById('adminLogin').onsubmit=async e=>{
-  e.preventDefault();const btn=document.getElementById('loginButton'),err=document.getElementById('loginError');btn.disabled=true;btn.textContent='Signing in…';
+  e.preventDefault();const btn=document.getElementById('loginButton'),errorNode=document.getElementById('loginError');btn.disabled=true;btn.textContent='Signing in…';
   try{
    const res=await fetch(AUTH_URL+'/token?grant_type=password',{method:'POST',headers:{'Content-Type':'application/json','apikey':API_KEY},body:JSON.stringify({email:document.getElementById('adminEmail').value.trim(),password:document.getElementById('adminPassword').value})});
    const session=await res.json();if(!res.ok)throw new Error(session.msg||session.message||'Sign in failed');
    setAdminStore(session);if(!await verifyAdmin())throw new Error('This account is not on the administrator allow-list.');
    await renderAdmin();
-  }catch(err){setAdminStore(null);err.textContent=err.message||'Unable to sign in';btn.disabled=false;btn.textContent='Sign in'}
+  }catch(error){setAdminStore(null);errorNode.textContent=error.message||'Unable to sign in';btn.disabled=false;btn.textContent='Sign in'}
  };
 }
 function timeValue(v){return String(v||'').slice(0,5)}
