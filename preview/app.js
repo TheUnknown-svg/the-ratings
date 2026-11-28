@@ -6,7 +6,8 @@ const API_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/functions/v1/unknown-rat
 const AUTH_URL='https://vvgvjfghtkhnqvbhjqcb.supabase.co/auth/v1';
 const API_KEY='sb_publishable_T_WBo0M8GVAE3Eo-bY6QQA_E1YX20vm';
 const app=document.getElementById('app');
-let schedules=[],events=[],pageVersion=0,poll=null,adminSession=null;
+let schedules=[],events=[],pageVersion=0,poll=null,adminSession=null,connectionIssue='';
+const ADMIN_HASH='#manage-7f3a9c2e';
 let state={page:'home',day:currentBishkek().weekday,meal:'',category:'',session:null};
 function currentBishkek(){
  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Bishkek',year:'numeric',month:'2-digit',day:'2-digit',weekday:'short'}).formatToParts(new Date());
@@ -33,15 +34,26 @@ function adminStore(){try{const raw=sessionStorage.getItem('tu_v2_admin_session'
 function setAdminStore(v){adminSession=v;try{if(v)sessionStorage.setItem('tu_v2_admin_session',JSON.stringify(v));else sessionStorage.removeItem('tu_v2_admin_session')}catch{}}
 adminSession=adminStore();
 async function api(action,data={},token=null){
- const bearer=token||API_KEY;
- const res=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'application/json','apikey':API_KEY,'Authorization':'Bearer '+bearer},body:JSON.stringify({action,...data})});
- let json={};try{json=await res.json()}catch{}
- if(!res.ok||json.success===false)throw new Error(json.error||'Request failed ('+res.status+')');
- return json;
+ const bearer=token||API_KEY,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
+ try{
+  const res=await fetch(API_URL,{method:'POST',cache:'no-store',credentials:'omit',signal:controller.signal,headers:{'Content-Type':'application/json','apikey':API_KEY,'Authorization':'Bearer '+bearer},body:JSON.stringify({action,...data})});
+  let json={};try{json=await res.json()}catch{}
+  if(!res.ok||json.success===false)throw new Error(json.error||'Request failed ('+res.status+')');
+  return json;
+ }catch(error){
+  if(error.name==='AbortError')throw new Error('The ratings server took too long to respond. Please retry.');
+  throw error;
+ }finally{clearTimeout(timer)}
 }
 async function loadPublic(){
- const [s,e]=await Promise.all([api('weekly-schedule'),api('active-events')]);
- schedules=s.schedule||[];events=e.events||[];
+ connectionIssue='';
+ const results=await Promise.allSettled([api('weekly-schedule'),api('active-events')]);
+ if(results[0].status==='fulfilled')schedules=results[0].value.schedule||[];
+ else schedules=[];
+ if(results[1].status==='fulfilled')events=results[1].value.events||[];
+ else events=[];
+ const failures=results.filter(x=>x.status==='rejected');
+ if(failures.length)connectionIssue=failures.length===2?'Live data is temporarily unavailable. Please retry.':'Some live data could not be loaded. Please retry to refresh it.';
 }
 function schedule(day,meal){return schedules.find(x=>Number(x.weekday)===day&&x.meal===meal)||null}
 function eventsFor(day,meal){const date=dateFor(day);return events.filter(e=>e.event_date===date&&e.meal===meal)}
@@ -70,7 +82,7 @@ async function getSummary(s){
 function setTheme(){document.body.className=state.page==='rate'?'cosmic':state.page==='overall'?'aurora':''}
 let historyDepth=0;
 function snap(){return {tuRatings:true,page:state.page,day:state.day,meal:state.meal,category:state.category,depth:historyDepth}}
-function go(p){state.page=p;historyDepth++;try{history.pushState(snap(),'','#'+p)}catch{historyDepth=Math.max(0,historyDepth-1)}render()}
+function go(p){state.page=p;historyDepth++;try{history.pushState(snap(),'',p==='admin'?ADMIN_HASH:'#'+p)}catch{historyDepth=Math.max(0,historyDepth-1)}render()}
 function back(fallback){if(historyDepth>0){history.back();return}state.page=fallback||'home';render()}
 window.addEventListener('popstate',e=>{
  if(e.state?.tuRatings){state.page=e.state.page||'home';state.day=e.state.day??state.day;state.meal=e.state.meal||'';state.category=e.state.category||'';historyDepth=Math.max(0,e.state.depth||0)}
@@ -87,10 +99,10 @@ function resultCard(title,subtitle,summary){
 function renderHome(){
  setTheme();
  app.innerHTML='<section class="hero"><div class="kicker">MESS EXPERIENCE</div><h1>How was the food?</h1><p>Choose a meal to rate it or explore the community\'s ratings.</p></section>'+dayNav()+
- '<div class="grid"><button class="tile" data-meal="breakfast"><span class="emoji">☀️</span><span><strong>Breakfast</strong><small>Rate & view results</small></span></button><button class="tile" data-meal="lunch"><span class="emoji">🥗</span><span><strong>Lunch</strong><small>Rate & view results</small></span></button><button class="tile" data-meal="dinner"><span class="emoji">🌙</span><span><strong>Dinner</strong><small>Veg / Non-Veg</small></span></button><button class="tile results" id="overall"><span class="emoji">✦</span><span><strong>Overall Ratings</strong><small>Five daily result meters</small></span></button></div><div class="row" style="margin-top:20px"><span class="notice">Live community ratings</span><button class="secondary" id="adminOpen">Admin</button></div>';
+ '<div class="grid"><button class="tile" data-meal="breakfast"><span class="emoji">☀️</span><span><strong>Breakfast</strong><small>Rate & view results</small></span></button><button class="tile" data-meal="lunch"><span class="emoji">🥗</span><span><strong>Lunch</strong><small>Rate & view results</small></span></button><button class="tile" data-meal="dinner"><span class="emoji">🌙</span><span><strong>Dinner</strong><small>Veg / Non-Veg</small></span></button><button class="tile results" id="overall"><span class="emoji">✦</span><span><strong>Overall Ratings</strong><small>Five daily result meters</small></span></button></div>'+(connectionIssue?'<div class="empty connection-warning" role="status">'+esc(connectionIssue)+' <button class="secondary" id="retryPublic">Retry</button></div>':'<div class="notice live-note">Live community ratings</div>');
  bindDays();
  app.querySelectorAll('[data-meal]').forEach(b=>b.onclick=()=>{state.meal=b.dataset.meal;const cats=categoryOptions(state.day,state.meal);if(state.meal==='dinner')go('category');else{state.category=cats[0]||'all';go('rate')}});
- document.getElementById('overall').onclick=()=>go('overall');document.getElementById('adminOpen').onclick=()=>go('admin');
+ document.getElementById('overall').onclick=()=>go('overall');const retry=document.getElementById('retryPublic');if(retry)retry.onclick=()=>{retry.disabled=true;retry.textContent='Retrying…';loadPublic().then(render).catch(()=>render())};
 }
 function renderCategory(){
  setTheme();const cats=categoryOptions(state.day,'dinner');
@@ -223,8 +235,8 @@ function render(){
 async function refreshRateMeter(){
  const s=sessionFor(state.day,state.meal,state.category);try{const r=await getSummary(s);const panel=app.querySelector('#liveMeter');if(panel)panel.outerHTML='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:counts(r)},'Taste')+'</section>'}catch{}
 }
-if(location.hash==='#admin')state.page='admin';
-historyDepth=0;try{history.replaceState(snap(),'','#'+state.page)}catch{}
+if(location.hash===ADMIN_HASH)state.page='admin';
+historyDepth=0;try{history.replaceState(snap(),'',state.page==='admin'?ADMIN_HASH:'#'+state.page)}catch{}
 app.innerHTML='<div class="empty">Connecting to live ratings…</div>';
 loadPublic().then(render).catch(err=>{app.innerHTML='<div class="empty">Unable to connect to live ratings: '+esc(err.message)+'</div><button class="secondary" id="retry">Retry</button>';document.getElementById('retry').onclick=()=>{app.innerHTML='<div class="empty">Connecting…</div>';loadPublic().then(render).catch(e=>{app.innerHTML='<div class="empty">'+esc(e.message)+'</div>'})}});
 
