@@ -127,8 +127,27 @@ function paintMeter(panel,summary){
   const nextPaths=fresh.querySelectorAll('.meter-segment'),oldPaths=current.querySelectorAll('.meter-segment');
   nextPaths.forEach((next,i)=>{
    const old=oldPaths[i];if(!old)return;
-   ['d','stroke','stroke-width','opacity','stroke-linecap'].forEach(attr=>old.setAttribute(attr,next.getAttribute(attr)||''));
+   const targetStart=Number(next.getAttribute('data-start')||180),targetEnd=Number(next.getAttribute('data-end')||180);
+   const fromStart=Number(old.getAttribute('data-start')??targetStart),fromEnd=Number(old.getAttribute('data-end')??targetEnd);
+   ['stroke','stroke-width','opacity','stroke-linecap'].forEach(attr=>old.setAttribute(attr,next.getAttribute(attr)||''));
    old.setAttribute('data-count',next.getAttribute('data-count')||'0');
+   if(old._meterFrame)cancelAnimationFrame(old._meterFrame);
+   const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+   if(!reduced&&typeof requestAnimationFrame==='function'){
+    const started=performance.now(),duration=420;
+    const animate=now=>{
+     const progress=Math.min(1,(now-started)/duration),eased=1-Math.pow(1-progress,3);
+     const a=fromStart+(targetStart-fromStart)*eased,b=fromEnd+(targetEnd-fromEnd)*eased;
+     old.setAttribute('d',meterArcPath(a,b));
+     old.setAttribute('data-start',String(a));old.setAttribute('data-end',String(b));
+     if(progress<1)old._meterFrame=requestAnimationFrame(animate);
+     else{old._meterFrame=0;old.setAttribute('d',next.getAttribute('d')||'');old.setAttribute('data-start',String(targetStart));old.setAttribute('data-end',String(targetEnd))}
+    };
+    old._meterFrame=requestAnimationFrame(animate);
+   }else{
+    old.setAttribute('d',next.getAttribute('d')||'');
+    old.setAttribute('data-start',String(targetStart));old.setAttribute('data-end',String(targetEnd));
+   }
   });
   current.setAttribute('aria-label',fresh.getAttribute('aria-label')||'');
   const nextTexts=fresh.querySelectorAll('text'),oldTexts=current.querySelectorAll('text');
@@ -383,6 +402,16 @@ function getPercentLabels(counts){
   return rounded===0?'<1%':rounded+'%';
  });
 }
+function meterArcPath(from,to){
+ const cx=150,cy=130,r=105;
+ const point=deg=>{
+  const rad=deg*Math.PI/180;
+  return [cx+r*Math.cos(rad),cy-r*Math.sin(rad)];
+ };
+ const [sx,sy]=point(from),[ex,ey]=point(to);
+ const sweep=from-to,large=sweep>180?1:0;
+ return `M ${sx.toFixed(3)} ${sy.toFixed(3)} A ${r} ${r} 0 ${large} 1 ${ex.toFixed(3)} ${ey.toFixed(3)}`;
+}
 function meter(data,title){
  const source=Array.isArray(data&&data.counts)?data.counts:[];
  const safeCounts=LEVELS.map((_,i)=>{
@@ -397,22 +426,13 @@ function meter(data,title){
  const activeCount=safeCounts.filter(n=>n>0).length;
  const gap=activeCount>1?2.8:0;
  const usable=Math.max(0,180-gap*(activeCount-1));
- const point=deg=>{
-  const rad=deg*Math.PI/180;
-  return [cx+r*Math.cos(rad),cy-r*Math.sin(rad)];
- };
- const arcPath=(from,to)=>{
-  const [sx,sy]=point(from),[ex,ey]=point(to);
-  const sweep=from-to,large=sweep>180?1:0;
-  return `M ${sx.toFixed(3)} ${sy.toFixed(3)} A ${r} ${r} 0 ${large} 1 ${ex.toFixed(3)} ${ey.toFixed(3)}`;
- };
- const track=arcPath(180,0);
+ const track=meterArcPath(180,0);
  let cursor=180;
  const segments=safeCounts.map((n,i)=>{
   const sweep=totalVotes&&n?usable*n/totalVotes:0;
-  const start=cursor,end=cursor-sweep,d=arcPath(start,end);
+  const start=cursor,end=cursor-sweep,d=meterArcPath(start,end);
   if(n)cursor=end-gap;
-  return `<path class="meter-segment" data-index="${i}" data-count="${n}" d="${d}" fill="none" stroke="${COLORS[i]}" stroke-width="${stroke}" stroke-linecap="butt" stroke-linejoin="round" opacity="${n?1:0}"/>`;
+  return `<path class="meter-segment" data-index="${i}" data-count="${n}" data-start="${start}" data-end="${end}" d="${d}" fill="none" stroke="${COLORS[i]}" stroke-width="${stroke}" stroke-linecap="butt" stroke-linejoin="round" opacity="${n?1:0}"/>`;
  }).join('');
  const center=totalVotes?`${peakPct}%`:'—';
  const voteText=`${totalVotes} ${totalVotes===1?'vote':'votes'}`;
