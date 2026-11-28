@@ -130,7 +130,7 @@ function bindDays(){
 function bindBack(fallback){const b=document.getElementById('back');if(b)b.onclick=()=>back(fallback)}
 function resultCard(title,subtitle,summary){
  const c=Array.isArray(summary?.counts)?summary.counts:counts(summary);
- return '<section class="panel"><div class="row"><div><h2>'+esc(title)+'</h2><p>'+esc(subtitle)+'</p></div><span class="pill">'+total(c)+' ratings</span></div>'+meter({counts:c},title)+'</section>';
+ return '<section class="panel result-card"><div class="result-heading"><div><h2>'+esc(title)+'</h2><p>'+esc(subtitle)+'</p></div><span class="pill">'+total(c)+' ratings</span></div>'+meter({counts:c},title)+'</section>';
 }
 function renderHome(){
  setTheme();
@@ -204,32 +204,47 @@ async function renderRate(){
 }
 async function renderOverall(){
  setTheme();const id=++pageVersion;
- app.innerHTML='<button class="back" id="back">← Home</button><div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Five meters based on actual submitted Taste ratings.</p>'+'<div class="empty">Loading live results…</div>';
- bindBack('home');
- const date=dateFor(state.day),regular=[
+ const heading='<div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Community ratings for the selected weekday.</p>';
+ app.innerHTML='<button class="back" id="back">← Home</button>'+heading+dayNav()+'<div class="empty">Loading live results…</div>';
+ bindBack('home');bindDays();
+ const date=dateFor(state.day);
+ const regular=[
   {rating_date:date,meal:'breakfast',category:'all',event_id:null},
   {rating_date:date,meal:'lunch',category:'all',event_id:null},
   {rating_date:date,meal:'dinner',category:'veg',event_id:null},
   {rating_date:date,meal:'dinner',category:'nonveg',event_id:null}
  ];
  const dayEvents=events.filter(e=>e.event_date===date);
- let summaries;
- try{summaries=await Promise.all([...regular.map(getSummary),...dayEvents.map(e=>getSummary({event_id:e.id}))])}
- catch{summaries=regular.map(()=>({}))}
+ const sessions=[...regular,...dayEvents.map(e=>({event_id:e.id}))];
+ const settled=await Promise.allSettled(sessions.map(getSummary));
  if(id!==pageVersion)return;
- const norm=summaries.slice(0,4),extra=summaries.slice(4);
- const breakfast=[norm[0],...dayEvents.map((e,i)=>e.meal==='breakfast'?extra[i]:null).filter(Boolean)];
- const lunch=[norm[1],...dayEvents.map((e,i)=>e.meal==='lunch'?extra[i]:null).filter(Boolean)];
- const veg=[norm[2],...dayEvents.map((e,i)=>e.meal==='dinner'&&e.category==='veg'?extra[i]:null).filter(Boolean)];
- const nonveg=[norm[3],...dayEvents.map((e,i)=>e.meal==='dinner'&&e.category==='nonveg'?extra[i]:null).filter(Boolean)];
+ const resolved=settled.map(x=>x.status==='fulfilled'?x.value:{total_ratings:0,very_bad:0,bad:0,good:0,very_good:0});
+ const failed=settled.filter(x=>x.status==='rejected').length;
+ const base=resolved.slice(0,4),eventSummaries=resolved.slice(4);
+ const eventGroups={breakfast:[],lunch:[],veg:[],nonveg:[]};
+ dayEvents.forEach((event,i)=>{
+  const summary=eventSummaries[i];
+  if(event.meal==='breakfast')eventGroups.breakfast.push(summary);
+  else if(event.meal==='lunch')eventGroups.lunch.push(summary);
+  else if(event.meal==='dinner'&&event.category==='veg')eventGroups.veg.push(summary);
+  else if(event.meal==='dinner'&&event.category==='nonveg')eventGroups.nonveg.push(summary);
+ });
+ const breakfast=[base[0],...eventGroups.breakfast];
+ const lunch=[base[1],...eventGroups.lunch];
+ const veg=[base[2],...eventGroups.veg];
+ const nonveg=[base[3],...eventGroups.nonveg];
  const all=[...breakfast,...lunch,...veg,...nonveg];
- app.innerHTML='<button class="back" id="back">← Home</button><div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Five meters based on actual submitted Taste ratings.</p>'+
- resultCard('Overall Experience','All meal sessions · '+DAYS[state.day],sumSummaries(all))+
- resultCard('Dinner · Veg','Vegetarian dinner · '+DAYS[state.day],sumSummaries(veg))+
- resultCard('Dinner · Non-Veg','Non-vegetarian dinner · '+DAYS[state.day],sumSummaries(nonveg))+
- resultCard('Lunch Overall','Lunch · '+DAYS[state.day],sumSummaries(lunch))+
- resultCard('Breakfast Overall','Breakfast · '+DAYS[state.day],sumSummaries(breakfast));
- bindBack('home');
+ const warning=failed?'<div class="empty results-warning" role="status">'+failed+' result '+(failed===1?'request':'requests')+' could not be loaded. Other meters are still shown; refresh to retry.</div>':'';
+ app.innerHTML='<button class="back" id="back">← Home</button>'+heading+dayNav()+
+ '<div class="results-summary"><span class="results-day">'+DAYS[state.day]+'</span><span> · '+date+'</span></div>'+
+ warning+'<div class="results-grid">'+
+ resultCard('Overall Experience','All meals and dinner categories',sumSummaries(all))+
+ resultCard('Dinner · Veg','Vegetarian dinner',sumSummaries(veg))+
+ resultCard('Dinner · Non-Veg','Non-vegetarian dinner',sumSummaries(nonveg))+
+ resultCard('Lunch Overall','Lunch ratings',sumSummaries(lunch))+
+ resultCard('Breakfast Overall','Breakfast ratings',sumSummaries(breakfast))+
+ '</div>';
+ bindBack('home');bindDays();
 }
 async function verifyAdmin(){
  if(!adminSession?.access_token)return false;
