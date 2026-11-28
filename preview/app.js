@@ -234,7 +234,7 @@ async function renderOverall(){
  const veg=[base[2],...eventGroups.veg];
  const nonveg=[base[3],...eventGroups.nonveg];
  const all=[...breakfast,...lunch,...veg,...nonveg];
- const warning=failed?'<div class="empty results-warning" role="status">'+failed+' result '+(failed===1?'request':'requests')+' could not be loaded. Other meters are still shown; refresh to retry.</div>':'';
+ const warning=failed?'<div class="empty results-warning" role="status">'+failed+' result '+(failed===1?'request':'requests')+' could not be loaded. Other meters are still shown. <button type="button" class="secondary" id="retryResults">Retry</button></div>':'';
  app.innerHTML='<button class="back" id="back">← Home</button>'+heading+dayNav()+
  '<div class="results-summary"><span class="results-day">'+DAYS[state.day]+'</span><span> · '+date+'</span></div>'+
  warning+'<div class="results-grid">'+
@@ -245,6 +245,7 @@ async function renderOverall(){
  resultCard('Breakfast Overall','Breakfast ratings',sumSummaries(breakfast))+
  '</div>';
  bindBack('home');bindDays();
+ const retry=document.getElementById('retryResults');if(retry)retry.onclick=()=>{retry.disabled=true;retry.textContent='Retrying…';summaryCache.clear();renderOverall()};
 }
 async function verifyAdmin(){
  if(!adminSession?.access_token)return false;
