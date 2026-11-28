@@ -135,7 +135,7 @@ function resultCard(title,subtitle,summary){
 }
 function renderHome(){
  setTheme();
- app.innerHTML='<section class="hero"><div class="kicker">MESS EXPERIENCE</div><h1>How was the food?</h1><p>Choose a meal to rate it or explore the community\'s ratings.</p></section>'+dayNav()+
+ app.innerHTML='<section class="hero"><div class="kicker">MESS EXPERIENCE</div><h1>How was the food?</h1><p>Choose a meal to rate it or explore the community\'s ratings.</p></section>'+
  '<div class="grid"><button class="tile" data-meal="breakfast"><span class="emoji">☀️</span><span><strong>Breakfast</strong><small>Rate & view results</small></span></button><button class="tile" data-meal="lunch"><span class="emoji">🥗</span><span><strong>Lunch</strong><small>Rate & view results</small></span></button><button class="tile" data-meal="dinner"><span class="emoji">🌙</span><span><strong>Dinner</strong><small>Veg / Non-Veg</small></span></button><button class="tile results" id="overall"><span class="emoji">✦</span><span><strong>Overall Ratings</strong><small>Five daily result meters</small></span></button></div>'+(connectionIssue?'<div class="empty connection-warning" role="status">'+esc(connectionIssue)+' <button class="secondary" id="retryPublic">Retry</button></div>':'<div class="notice live-note">Live community ratings</div>');
  bindDays();
  app.querySelectorAll('[data-meal]').forEach(b=>b.onclick=()=>{state.meal=b.dataset.meal;const cats=categoryOptions(state.day,state.meal);if(state.meal==='dinner')go('category');else{state.category=cats[0]||'all';go('rate')}});
@@ -152,7 +152,7 @@ async function renderRate(){
   if(!cachedSummary){try{cachedSummary=JSON.parse(safeRead('tu_v2_summary_'+sessionKey(s))||'null');if(cachedSummary?.value)summaryCache.set(sessionKey(s),cachedSummary)}catch{}}
   let liveCounts=counts(cachedSummary?.value||{});
  const meterPanel='<section class="panel" id="liveMeter"><div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:liveCounts},'Taste')+'</section>';
- const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+dateFor(state.day)+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
+ const head='<button class="back" id="back">← '+(state.meal==='dinner'?'Dinner options':'All meals')+'</button><div class="kicker">'+DAYS[state.day]+' · '+state.meal.toUpperCase()+' '+(state.meal==='dinner'?state.category.toUpperCase():'')+'</div><h1>Rate your meal.</h1>';
  let savedRecord=saved;
  const existing=Number(savedRecord?.taste_rating)||0,reviewText=savedRecord?.review||'';
   const savedNotice=savedRecord?'<section class="panel edit-saved" id="savedNotice"><div class="row"><div><h2>Your rating is saved</h2><p>You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button></section>':'';
@@ -205,8 +205,8 @@ async function renderRate(){
 }
 async function renderOverall(){
  setTheme();const id=++pageVersion;
- app.innerHTML='<button class="back" id="back">← Home</button><div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Five meters based on actual submitted Taste ratings.</p>'+dayNav()+'<div class="empty">Loading live results…</div>';
- bindBack('home');bindDays();
+ app.innerHTML='<button class="back" id="back">← Home</button><div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Five meters based on actual submitted Taste ratings.</p>'+'<div class="empty">Loading live results…</div>';
+ bindBack('home');
  const date=dateFor(state.day),regular=[
   {rating_date:date,meal:'breakfast',category:'all',event_id:null},
   {rating_date:date,meal:'lunch',category:'all',event_id:null},
@@ -224,7 +224,7 @@ async function renderOverall(){
  const veg=[norm[2],...dayEvents.map((e,i)=>e.meal==='dinner'&&e.category==='veg'?extra[i]:null).filter(Boolean)];
  const nonveg=[norm[3],...dayEvents.map((e,i)=>e.meal==='dinner'&&e.category==='nonveg'?extra[i]:null).filter(Boolean)];
  const all=[...breakfast,...lunch,...veg,...nonveg];
- app.innerHTML='<button class="back" id="back">← Home</button><div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Five meters based on actual submitted Taste ratings · '+date+'</p>'+dayNav()+
+ app.innerHTML='<button class="back" id="back">← Home</button><div class="kicker">THE UNKNOWN · RESULTS</div><h1>Overall Ratings</h1><p>Five meters based on actual submitted Taste ratings.</p>'+dayNav()+
  resultCard('Overall Experience','All meal sessions · '+DAYS[state.day],sumSummaries(all))+
  resultCard('Dinner · Veg','Vegetarian dinner · '+DAYS[state.day],sumSummaries(veg))+
  resultCard('Dinner · Non-Veg','Non-vegetarian dinner · '+DAYS[state.day],sumSummaries(nonveg))+
