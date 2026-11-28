@@ -228,6 +228,15 @@ historyDepth=0;try{history.replaceState(snap(),'','#'+state.page)}catch{}
 app.innerHTML='<div class="empty">Connecting to live ratings…</div>';
 loadPublic().then(render).catch(err=>{app.innerHTML='<div class="empty">Unable to connect to live ratings: '+esc(err.message)+'</div><button class="secondary" id="retry">Retry</button>';document.getElementById('retry').onclick=()=>{app.innerHTML='<div class="empty">Connecting…</div>';loadPublic().then(render).catch(e=>{app.innerHTML='<div class="empty">'+esc(e.message)+'</div>'})}});
 
+function getPercentLabels(counts){
+ const total=counts.reduce((a,b)=>a+b,0);
+ if(!total)return counts.map(()=> '0%');
+ return counts.map(n=>{
+  if(!n)return '0%';
+  const rounded=Math.round(n*100/total);
+  return rounded===0?'<1%':rounded+'%';
+ });
+}
 function meter(data,title){
  // Sanitize counts once. Every meter (live Taste and all Overall cards)
  // uses this exact renderer so the geometry cannot diverge between pages.
