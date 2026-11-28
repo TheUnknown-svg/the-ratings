@@ -12,7 +12,7 @@ const PUBLIC_CACHE_KEY='tu_v2_public_cache';
 function restorePublicCache(){try{const x=JSON.parse(safeRead(PUBLIC_CACHE_KEY)||'null');if(x&&Date.now()-x.savedAt<86400000){schedules=x.schedules||[];events=x.events||[]}}catch{}}
 function savePublicCache(){safeWrite(PUBLIC_CACHE_KEY,JSON.stringify({savedAt:Date.now(),schedules,events}))}
 const ADMIN_HASH='#manage-7f3a9c2e';
-let state={page:'home',day:currentBishkek().weekday,weekOffset:0,meal:'',category:'',session:null};
+let state={page:'home',day:currentBishkek().weekday,meal:'',category:'',session:null};
 function currentBishkek(){
  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Bishkek',year:'numeric',month:'2-digit',day:'2-digit',weekday:'short'}).formatToParts(new Date());
  const v={};for(const p of parts)if(p.type!=='literal')v[p.type]=p.value;
@@ -121,12 +121,11 @@ window.addEventListener('popstate',e=>{
  render();
 });
 function dayNav(){
- const start=dateFor(0),end=dateFor(6),fmt=x=>new Date(x+'T12:00:00Z').toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'});
- return '<div class="week-nav"><button class="week-shift" data-week="-1" aria-label="Previous week">‹</button><strong>'+fmt(start)+' – '+fmt(end)+'</strong><button class="week-shift" data-week="1" aria-label="Next week">›</button><button class="week-today" data-week="today">Today</button></div><div class="days">'+DAYS.map((d,i)=>'<button class="day '+(i===state.day?'active':'')+'" data-day="'+i+'"><span>'+d.slice(0,3)+'</span><small>'+fmt(dateFor(i))+'</small></button>').join('')+'</div>';
+ return '<nav class="days" aria-label="Choose weekday">'+DAYS.map((d,i)=>'<button type="button" class="day '+(i===state.day?'active':'')+'" data-day="'+i+'" aria-pressed="'+(i===state.day?'true':'false')+'">'+d.slice(0,3)+'</button>').join('')+'</nav>';
 }
 function bindDays(){
  app.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{state.day=Number(b.dataset.day);render()});
- app.querySelectorAll('[data-week]').forEach(b=>b.onclick=()=>{if(b.dataset.week==='today'){state.weekOffset=0;state.day=currentBishkek().weekday}else state.weekOffset=(state.weekOffset||0)+Number(b.dataset.week);render()});
+
 }
 function bindBack(fallback){const b=document.getElementById('back');if(b)b.onclick=()=>back(fallback)}
 function resultCard(title,subtitle,summary){
@@ -135,7 +134,7 @@ function resultCard(title,subtitle,summary){
 }
 function renderHome(){
  setTheme();
- app.innerHTML='<section class="hero"><div class="kicker">MESS EXPERIENCE</div><h1>How was the food?</h1><p>Choose a meal to rate it or explore the community\'s ratings.</p></section>'+
+ app.innerHTML='<section class="hero"><div class="kicker">MESS EXPERIENCE</div><h1>How was the food?</h1><p>Choose a meal to rate it or explore the community\'s ratings.</p></section>'+dayNav()+
  '<div class="grid"><button class="tile" data-meal="breakfast"><span class="emoji">☀️</span><span><strong>Breakfast</strong><small>Rate & view results</small></span></button><button class="tile" data-meal="lunch"><span class="emoji">🥗</span><span><strong>Lunch</strong><small>Rate & view results</small></span></button><button class="tile" data-meal="dinner"><span class="emoji">🌙</span><span><strong>Dinner</strong><small>Veg / Non-Veg</small></span></button><button class="tile results" id="overall"><span class="emoji">✦</span><span><strong>Overall Ratings</strong><small>Five daily result meters</small></span></button></div>'+(connectionIssue?'<div class="empty connection-warning" role="status">'+esc(connectionIssue)+' <button class="secondary" id="retryPublic">Retry</button></div>':'<div class="notice live-note">Live community ratings</div>');
  bindDays();
  app.querySelectorAll('[data-meal]').forEach(b=>b.onclick=()=>{state.meal=b.dataset.meal;const cats=categoryOptions(state.day,state.meal);if(state.meal==='dinner')go('category');else{state.category=cats[0]||'all';go('rate')}});
