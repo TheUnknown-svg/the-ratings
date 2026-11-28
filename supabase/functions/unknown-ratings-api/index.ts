@@ -132,48 +132,60 @@ async function getRatingSession(body: Record<string, unknown>) {
   const now = bishkekClock();
   const meal = body.meal;
   const category = body.category;
+  const requestedDate = body.rating_date === undefined ? now.date : body.rating_date;
+  if (!validDate(requestedDate)) {
+    return { error: "Invalid rating date", status: 400 as const };
+  }
+  const selectedDate = new Date(requestedDate + "T12:00:00Z");
+  const selectedWeekday = selectedDate.getUTCDay();
+  const today = new Date(now.date + "T12:00:00Z");
+  const weekStart = new Date(today);
+  weekStart.setUTCDate(weekStart.getUTCDate() - now.weekday);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+  if (selectedDate < weekStart || selectedDate > weekEnd) {
+    return { error: "Ratings can be submitted only for dates in the currently displayed week", status: 403 as const };
+  }
   if (typeof meal !== "string" || typeof category !== "string" ||
       !["breakfast", "lunch", "dinner"].includes(meal) ||
       !["all", "veg", "nonveg"].includes(category)) {
     return { error: "Invalid meal or category", status: 400 as const };
   }
+  if ((meal === "breakfast" || meal === "lunch") && category !== "all") {
+    return { error: "Breakfast and lunch use the All category", status: 400 as const };
+  }
+  if (meal === "dinner" && !["veg", "nonveg"].includes(category)) {
+    return { error: "Dinner requires Veg or Non-Veg", status: 400 as const };
+  }
   if (body.event_id !== undefined && body.event_id !== null) {
     if (!validUuid(body.event_id)) return { error: "Invalid event ID", status: 400 as const };
     const { data: event, error } = await adminClient
       .from("temporary_events")
-      .select("id,event_date,meal,category,opens_at,closes_at,active")
+      .select("id,event_date,meal,category,active")
       .eq("id", body.event_id)
       .eq("active", true)
       .maybeSingle();
     if (error) return { error: "Unable to verify event session", status: 500 as const };
-    if (!event || event.event_date !== now.date ||
+    if (!event || event.event_date !== requestedDate ||
         event.meal !== meal || event.category !== category) {
-      return { error: "This event rating session is not active today", status: 403 as const };
+      return { error: "This event does not match the selected date and meal", status: 403 as const };
     }
-    // Ratings remain open 24/7 on the event date; stored event hours are informational only.
-    return { session: { rating_date: now.date, weekday: now.weekday, meal, category, event_id: event.id } };
-  }
-  if ((meal === "breakfast" || meal === "lunch") && category !== "all") {
-    return { error: "Breakfast and lunch use the All category", status: 400 as const };
-  }
-  if (meal === "dinner" && !["veg", "nonveg"].includes(String(category))) {
-    return { error: "Dinner requires Veg or Non-Veg", status: 400 as const };
+    return { session: { rating_date: requestedDate, weekday: selectedWeekday, meal, category, event_id: event.id } };
   }
   const { data: schedule, error } = await adminClient
     .from("meal_schedules")
-    .select("opens_at,closes_at,veg_enabled,nonveg_enabled")
-    .eq("weekday", now.weekday)
+    .select("veg_enabled,nonveg_enabled")
+    .eq("weekday", selectedWeekday)
     .eq("meal", meal)
     .maybeSingle();
   if (error) return { error: "Unable to verify meal schedule", status: 500 as const };
-  if (!schedule) return { error: "No schedule exists for this meal today", status: 403 as const };
+  if (!schedule) return { error: "No schedule exists for this meal on the selected day", status: 403 as const };
   if (meal === "dinner" &&
       ((category === "veg" && !schedule.veg_enabled) ||
        (category === "nonveg" && !schedule.nonveg_enabled))) {
-    return { error: "This dinner category is not available today", status: 403 as const };
+    return { error: "This dinner category is not available on the selected day", status: 403 as const };
   }
-  // Ratings remain open 24/7 for today's scheduled meal; stored meal hours are informational only.
-  return { session: { rating_date: now.date, weekday: now.weekday, meal, category, event_id: null } };
+  return { session: { rating_date: requestedDate, weekday: selectedWeekday, meal, category, event_id: null } };
 }
 async function ratingSummaryFor(session: {
   rating_date: string; meal: string; category: string; event_id: string | null;
