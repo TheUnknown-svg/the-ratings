@@ -112,7 +112,7 @@ function paintMeter(panel,summary){
 
 function setTheme(){document.body.className=state.page==='rate'?'cosmic':state.page==='overall'?'aurora':''}
 let historyDepth=0;
-function snap(){return {tuRatings:true,page:state.page,day:state.day,meal:state.meal,category:state.category,depth:historyDepth}}
+function snap(){return {tuRatings:true,page:state.page,day:state.day,weekOffset:state.weekOffset||0,meal:state.meal,category:state.category,depth:historyDepth}}
 function go(p){state.page=p;historyDepth++;try{history.pushState(snap(),'',p==='admin'?ADMIN_HASH:'#'+p)}catch{historyDepth=Math.max(0,historyDepth-1)}render()}
 function back(fallback){if(historyDepth>0){history.back();return}state.page=fallback||'home';render()}
 window.addEventListener('popstate',e=>{
@@ -166,8 +166,13 @@ async function renderRate(){
  document.getElementById('vote').onsubmit=e=>e.preventDefault();
   document.getElementById('send').addEventListener('click',async()=>{if(!chosen)return;
   const btn=document.getElementById('send'),msg=document.getElementById('message');btn.disabled=true;btn.textContent=savedRecord?'Updating…':'Posting…';
+  const beforeCounts=liveCounts.slice(),previous=Number(savedRecord?.taste_rating)||0;
+  if(previous>0)liveCounts[previous-1]=Math.max(0,liveCounts[previous-1]-1);
+  liveCounts[chosen-1]++;
+  const optimisticSummary={total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]};
+  paintMeter(app.querySelector('#liveMeter'),optimisticSummary);
   try{
-   const reviewValue=review.value.trim(),previous=Number(savedRecord?.taste_rating)||0;
+   const reviewValue=review.value.trim();
    let nextRecord,serverSummary=null;
     if(savedRecord?.edit_token){
      const result=await api('edit-rating',{edit_token:savedRecord.edit_token,taste_rating:chosen,review:reviewValue});
@@ -180,17 +185,13 @@ async function renderRate(){
     }
     saveEditRecord(s,nextRecord);savedRecord=nextRecord;
     if(serverSummary)liveCounts=counts(serverSummary);
-    else{
-     if(previous>0)liveCounts[previous-1]=Math.max(0,liveCounts[previous-1]-1);
-     liveCounts[chosen-1]++;
-    }
     const nextSummary=serverSummary||{total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]};
     summaryCache.set(sessionKey(s),{at:Date.now(),value:nextSummary});
     safeWrite('tu_v2_summary_'+sessionKey(s),JSON.stringify({at:Date.now(),value:nextSummary}));
     paintMeter(app.querySelector('#liveMeter'),nextSummary);
    msg.textContent='Saved — your rating meter has been updated.';
    btn.textContent='Update my rating';btn.disabled=false;
-  }catch(err){msg.textContent=err.message||'Unable to submit rating.';btn.disabled=false;btn.textContent=savedRecord?'Update rating':'Post'}
+  }catch(err){liveCounts=beforeCounts;paintMeter(app.querySelector('#liveMeter'),{total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]});msg.textContent=err.message||'Unable to submit rating.';btn.disabled=false;btn.textContent=savedRecord?'Update rating':'Post'}
  });
  // Show the form immediately; refresh only the meter after the live summary arrives.
  getSummary(s,false).then(summary=>{
@@ -285,7 +286,7 @@ function render(){
  if(poll){clearInterval(poll);poll=null}
  if(state.page==='home')renderHome();
  else if(state.page==='category')renderCategory();
- else if(state.page==='rate'){renderRate();poll=setInterval(()=>{if(document.visibilityState==='visible'&&state.page==='rate')refreshRateMeter()},10000)}
+ else if(state.page==='rate'){renderRate();poll=setInterval(()=>{if(document.visibilityState==='visible'&&state.page==='rate')refreshRateMeter()},20000)}
  else if(state.page==='overall'){renderOverall()}
  else if(state.page==='admin')renderAdmin();
 }
