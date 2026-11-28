@@ -194,3 +194,28 @@ textarea,.field{background:#0b0f18;border-color:rgba(160,170,200,.22);color:#f4f
 
 /* SVG meter labels ease with the animated segment geometry. */
 .number{transition:fill .25s ease}
+
+/* Lightweight motion polish for Overall Ratings */
+@keyframes resultsCardIn{
+ from{opacity:0;transform:translate3d(0,13px,0) scale(.985);filter:blur(3px)}
+ to{opacity:1;transform:translate3d(0,0,0) scale(1);filter:blur(0)}
+}
+.results-grid .result-card{animation:resultsCardIn .42s cubic-bezier(.2,.75,.25,1) both;transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease}
+.results-grid .result-card:nth-child(1){animation-delay:0ms}
+.results-grid .result-card:nth-child(2){animation-delay:45ms}
+.results-grid .result-card:nth-child(3){animation-delay:90ms}
+.results-grid .result-card:nth-child(4){animation-delay:135ms}
+.results-grid .result-card:nth-child(5){animation-delay:180ms}
+.results-grid .result-card .meter-layout{transition:background .24s ease,border-color .24s ease,box-shadow .24s ease}
+.results-grid .result-card .pill{transition:background .2s ease,color .2s ease}
+.results-grid .result-card .legendline{transition:background .18s ease,transform .18s ease}
+.results-grid .result-card .legendline b{font-variant-numeric:tabular-nums;transition:color .2s ease}
+.results-grid .result-card .number{font-variant-numeric:tabular-nums}
+@media(hover:hover){
+ .results-grid .result-card:hover{transform:translateY(-3px);border-color:rgba(208,140,255,.45);box-shadow:0 17px 38px rgba(0,0,0,.27)}
+ .results-grid .result-card:hover .legendline{background:rgba(255,255,255,.025)}
+}
+@media(prefers-reduced-motion:reduce){
+ .results-grid .result-card{animation:none!important;transition:none!important}
+ .results-grid .result-card *{scroll-behavior:auto!important;transition:none!important}
+}
