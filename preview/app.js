@@ -136,6 +136,7 @@ function paintMeter(panel,summary){
    if(!reduced&&typeof requestAnimationFrame==='function'){
     const started=performance.now(),duration=420;
     const animate=now=>{
+     if(!old.isConnected){old._meterFrame=0;return}
      const progress=Math.min(1,(now-started)/duration),eased=1-Math.pow(1-progress,3);
      const a=fromStart+(targetStart-fromStart)*eased,b=fromEnd+(targetEnd-fromEnd)*eased;
      old.setAttribute('d',meterArcPath(a,b));
