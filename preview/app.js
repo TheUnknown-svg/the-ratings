@@ -80,9 +80,17 @@ function counts(summary){return [summary?.very_bad,summary?.bad,summary?.good,su
 function total(c){return c.reduce((a,b)=>a+b,0)}
 function dataFromCounts(c){return {counts:c,total:total(c)}}
 function sumSummaries(arr){const c=[0,0,0,0];arr.forEach(s=>counts(s).forEach((n,i)=>c[i]+=n));return dataFromCounts(c)}
-async function getSummary(s){
+async function getSummary(s,force=false){
+ const key=sessionKey(s),cached=summaryCache.get(key);
+ if(!force&&cached&&Date.now()-cached.at<10000)return cached.value;
+ if(!force&&summaryRequests.has(key))return summaryRequests.get(key);
  const payload=s.event_id?{event_id:s.event_id}:{rating_date:s.rating_date,meal:s.meal,category:s.category};
- const r=await api('rating-summary',payload);return r.summary||{total_ratings:0,very_bad:0,bad:0,good:0,very_good:0};
+ const request=api('rating-summary',payload).then(r=>{const value=r.summary||{total_ratings:0,very_bad:0,bad:0,good:0,very_good:0};summaryCache.set(key,{at:Date.now(),value});return value}).finally(()=>{if(summaryRequests.get(key)===request)summaryRequests.delete(key)});
+ summaryRequests.set(key,request);return request;
+}
+async function updateRateMeter(s){
+ const panel=app.querySelector('#liveMeter');if(!panel)return;
+ try{const summary=await getSummary(s,true);const current=app.querySelector('#liveMeter');if(current)current.innerHTML='<div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:counts(summary)},'Taste')}catch{}
 }
 function setTheme(){document.body.className=state.page==='rate'?'cosmic':state.page==='overall'?'aurora':''}
 let historyDepth=0;
