@@ -236,7 +236,7 @@ async function renderOverall(){
  const all=[...breakfast,...lunch,...veg,...nonveg];
  const warning=failed?'<div class="empty results-warning" role="status">'+failed+' result '+(failed===1?'request':'requests')+' could not be loaded. Other meters are still shown. <button type="button" class="secondary" id="retryResults">Retry</button></div>':'';
  app.innerHTML='<button class="back" id="back">← Home</button>'+heading+dayNav()+
- '<div class="results-summary"><span class="results-day">'+DAYS[state.day]+'</span><span> · '+date+'</span></div>'+
+ '<div class="results-summary"><span class="results-day">'+DAYS[state.day]+'</span><span> · Selected menu day</span></div>'+
  warning+'<div class="results-grid">'+
  resultCard('Overall Experience','All meals and dinner categories',sumSummaries(all))+
  resultCard('Dinner · Veg','Vegetarian dinner',sumSummaries(veg))+
