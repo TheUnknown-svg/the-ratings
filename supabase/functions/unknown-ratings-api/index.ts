@@ -150,9 +150,7 @@ async function getRatingSession(body: Record<string, unknown>) {
         event.meal !== meal || event.category !== category) {
       return { error: "This event rating session is not active today", status: 403 as const };
     }
-    if (now.time < event.opens_at || now.time >= event.closes_at) {
-      return { error: "This rating session is currently closed", status: 403 as const };
-    }
+    // Ratings remain open 24/7 on the event date; stored event hours are informational only.
     return { session: { rating_date: now.date, weekday: now.weekday, meal, category, event_id: event.id } };
   }
   if ((meal === "breakfast" || meal === "lunch") && category !== "all") {
@@ -174,9 +172,7 @@ async function getRatingSession(body: Record<string, unknown>) {
        (category === "nonveg" && !schedule.nonveg_enabled))) {
     return { error: "This dinner category is not available today", status: 403 as const };
   }
-  if (now.time < schedule.opens_at || now.time >= schedule.closes_at) {
-    return { error: "This rating session is currently closed", status: 403 as const };
-  }
+  // Ratings remain open 24/7 for today's scheduled meal; stored meal hours are informational only.
   return { session: { rating_date: now.date, weekday: now.weekday, meal, category, event_id: null } };
 }
 async function ratingSummaryFor(session: {
