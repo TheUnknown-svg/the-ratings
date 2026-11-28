@@ -146,7 +146,7 @@ async function renderRate(){
  app.querySelectorAll('.rate').forEach(b=>b.onclick=()=>{chosen=Number(b.dataset.v);app.querySelectorAll('.rate').forEach(x=>x.classList.toggle('selected',x===b));document.getElementById('send').disabled=false});
  document.getElementById('vote').onsubmit=async e=>{
   e.preventDefault();if(!chosen)return;
-  const btn=document.getElementById('send'),msg=document.getElementById('message');btn.disabled=true;btn.textContent=saved?'Updating…':'Posting…';
+  const btn=document.getElementById('send'),msg=document.getElementById('message');btn.disabled=true;btn.textContent=savedRecord?'Updating…':'Posting…';
   try{
    const reviewValue=review.value.trim(),previous=Number(savedRecord?.taste_rating)||0;
    let nextRecord;
@@ -160,6 +160,7 @@ async function renderRate(){
    saveEditRecord(s,nextRecord);savedRecord=nextRecord;
    if(previous>0)liveCounts[previous-1]=Math.max(0,liveCounts[previous-1]-1);
    liveCounts[chosen-1]++;
+   summaryCache.set(sessionKey(s),{at:Date.now(),value:{total_ratings:total(liveCounts),very_bad:liveCounts[0],bad:liveCounts[1],good:liveCounts[2],very_good:liveCounts[3]}});
    const livePanel=app.querySelector('#liveMeter');
    if(livePanel)livePanel.innerHTML='<div class="row"><div><h2>Taste</h2><p>How did it taste?</p></div><span class="pill">LIVE METER</span></div>'+meter({counts:liveCounts},'Taste');
    const votePanel=document.getElementById('votePanel');if(votePanel)votePanel.hidden=true;
@@ -167,7 +168,7 @@ async function renderRate(){
    if(!savedPanel){savedPanel=document.createElement('section');savedPanel.className='panel edit-saved';votePanel.parentNode.insertBefore(savedPanel,votePanel);}
    savedPanel.innerHTML='<div class="row"><div><h2>Your rating is saved</h2><p>Your meter has been updated. You can change your choice or review at any time from this device.</p></div><span class="pill">SAVED</span></div><button class="secondary edit-trigger" id="editToggle" type="button">✎ Edit my rating</button>';
    bindEditToggle();btn.textContent='Update my rating';btn.disabled=false;
-  }catch(err){msg.textContent=err.message||'Unable to submit rating.';btn.disabled=false;btn.textContent=saved?'Update rating':'Post'}
+  }catch(err){msg.textContent=err.message||'Unable to submit rating.';btn.disabled=false;btn.textContent=savedRecord?'Update rating':'Post'}
  };
 }
 async function renderOverall(){
